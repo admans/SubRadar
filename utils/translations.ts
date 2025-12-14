@@ -1,0 +1,82 @@
+import { Language } from '../types';
+
+export const translations = {
+  en: {
+    appName: 'SubRadar',
+    totalMonthly: '/ mo',
+    settings: 'Settings',
+    notifications: 'Notifications',
+    notificationsDesc: 'Alert on due date',
+    language: 'Language',
+    languageDesc: 'Switch between English and Chinese',
+    about: 'About',
+    aboutDesc: 'SubRadar runs entirely in your browser. Your data is stored locally on this device and is never sent to any server.',
+    noSubsTitle: 'No subscriptions yet',
+    noSubsDesc: 'Tap the + button to add your first subscription.',
+    payToday: 'PAY TODAY',
+    dueToday: 'Due today',
+    overdue: 'Overdue by {days} days',
+    inDays: 'In {days} days',
+    newSub: 'New Subscription',
+    editSub: 'Edit Subscription',
+    serviceName: 'Service Name',
+    price: 'Price',
+    currency: 'Currency',
+    billingCycle: 'Billing Cycle',
+    nextBillingDate: 'Next Billing Date',
+    startDate: 'Start Date (Optional)',
+    accountBalance: 'Balance (Optional)',
+    balanceLabel: 'Bal',
+    save: 'Save Subscription',
+    delete: 'Delete',
+    confirmDelete: 'Are you sure you want to delete this subscription?',
+    monthly: 'Monthly',
+    yearly: 'Yearly',
+    mo: 'mo',
+    yr: 'yr',
+    en: 'English',
+    zh: '简体中文'
+  },
+  zh: {
+    appName: 'SubRadar',
+    totalMonthly: '/ 月',
+    settings: '设置',
+    notifications: '续费提醒',
+    notificationsDesc: '在到期当天发送通知',
+    language: '语言',
+    languageDesc: '切换中英文显示',
+    about: '关于',
+    aboutDesc: 'SubRadar 完全在您的浏览器中运行。您的数据存储在本地设备上，绝不会发送到任何服务器。',
+    noSubsTitle: '暂无订阅',
+    noSubsDesc: '点击 + 按钮添加您的第一个订阅。',
+    payToday: '今天付款',
+    dueToday: '今天到期',
+    overdue: '已逾期 {days} 天',
+    inDays: '还有 {days} 天',
+    newSub: '新建订阅',
+    editSub: '编辑订阅',
+    serviceName: '服务名称',
+    price: '金额',
+    currency: '货币',
+    billingCycle: '计费周期',
+    nextBillingDate: '下次扣费日期',
+    startDate: '订阅日期 (选填)',
+    accountBalance: '账户余额 (选填)',
+    balanceLabel: '余额',
+    save: '保存订阅',
+    delete: '删除',
+    confirmDelete: '确定要删除这个订阅吗？',
+    monthly: '按月',
+    yearly: '按年',
+    mo: '月',
+    yr: '年',
+    en: 'English',
+    zh: '简体中文'
+  }
+};
+
+export type Translation = typeof translations.en;
+
+export const getTranslation = (lang: Language): Translation => {
+  return translations[lang];
+};
