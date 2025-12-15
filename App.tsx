@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages, Search, X, Moon, Sun, Monitor } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { StatusBar, Style } from '@capacitor/status-bar';
 import { Subscription, AppSettings, Language, BillingCycle, Theme } from './types';
 import * as storage from './services/storageService';
 import SubscriptionForm from './components/SubscriptionForm';
@@ -79,19 +80,36 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Theme Logic
+  // Theme Logic & Status Bar
   useEffect(() => {
     const root = window.document.documentElement;
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
-    const applyTheme = () => {
+    const applyTheme = async () => {
       const systemTheme = mediaQuery.matches ? 'dark' : 'light';
       const effectiveTheme = settings.theme === 'auto' ? systemTheme : settings.theme;
 
+      // 1. Apply CSS Class
       if (effectiveTheme === 'dark') {
         root.classList.add('dark');
       } else {
         root.classList.remove('dark');
+      }
+
+      // 2. Apply Immersive Status Bar
+      try {
+        // Overlay webview content under the status bar
+        await StatusBar.setOverlaysWebView({ overlay: true });
+        
+        // Set style based on theme (Dark theme = Light Text, Light theme = Dark Text)
+        if (effectiveTheme === 'dark') {
+           await StatusBar.setStyle({ style: Style.Dark }); 
+        } else {
+           await StatusBar.setStyle({ style: Style.Light });
+        }
+      } catch (e) {
+        // Ignore errors in browser environment
+        console.debug('StatusBar not available');
       }
     };
 
