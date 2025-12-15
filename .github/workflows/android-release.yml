@@ -11,7 +11,7 @@ on:
       version:
         description: 'Version Tag (e.g. v1.3.2)'
         required: true
-        default: 'v1.3.3.3'
+        default: 'v1.3.3.4'
       notes:
         description: 'Custom Notes (Optional)'
         required: false
@@ -49,34 +49,51 @@ jobs:
             echo "VERSION_TAG=${{ github.ref_name }}" >> $GITHUB_ENV
           fi
 
-      # 2. Generate Bilingual Changelog
+      # 2. Generate Bilingual Changelog (Robust Version)
       - name: Generate Changelog
         id: changelog
         run: |
-          # Find the previous tag to compare against
+          # Try to find the previous tag. If none, we assume it's the first release.
+          # We search for tags reachable from the current commit, excluding the current one if possible.
           PREV_TAG=$(git describe --tags --abbrev=0 ${{ env.VERSION_TAG }}^ 2>/dev/null || echo "")
           
-          echo "Generating changelog from $PREV_TAG to ${{ env.VERSION_TAG }}..."
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found. Generating full log."
+            LOG_RANGE="HEAD"
+          else
+            echo "Generating changelog from $PREV_TAG to HEAD..."
+            LOG_RANGE="$PREV_TAG..HEAD"
+          fi
           
           # Initialize content
           CONTENT=""
           
-          # 1. Features Section
-          FEATS=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" --grep="^feat" || true)
+          # 1. Features (feat, add, new, implement, feature) - Case Insensitive
+          # -i: ignore case, -E: extended regex
+          FEATS=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --grep="^\(feat\|add\|new\|implement\|feature\)" -i || true)
           if [ ! -z "$FEATS" ]; then
             CONTENT="$CONTENT\n\n### 🚀 New Features | 新功能\n$FEATS"
           fi
           
-          # 2. Fixes Section
-          FIXES=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" --grep="^fix" || true)
+          # 2. Fixes (fix, bug, issue, resolve, repair) - Case Insensitive
+          FIXES=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --grep="^\(fix\|bug\|issue\|resolve\|repair\)" -i || true)
           if [ ! -z "$FIXES" ]; then
             CONTENT="$CONTENT\n\n### 🐛 Bug Fixes | 问题修复\n$FIXES"
           fi
           
-          # 3. Other Changes (exclude feat, fix, and release commits)
-          OTHERS=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" --invert-grep --grep="^feat" --grep="^fix" --grep="^Release" --grep="Merge" || true)
+          # 3. Improvements & Others (update, refactor, style, chore, perf, docs)
+          # Captures 'update', 'refactor', 'chore', etc OR anything that wasn't caught above if you want to be safe,
+          # but here we target specific improvement keywords to keep it clean.
+          IMPROVES=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --grep="^\(update\|refactor\|style\|chore\|perf\|docs\|optimize\)" -i || true)
+          if [ ! -z "$IMPROVES" ]; then
+            CONTENT="$CONTENT\n\n### 🛠 Improvements | 改进优化\n$IMPROVES"
+          fi
+          
+          # 4. Catch-all for commits that didn't match the above categories (Optional)
+          # Invert matching all the keywords above
+          OTHERS=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --invert-grep --grep="^\(feat\|add\|new\|implement\|feature\|fix\|bug\|issue\|resolve\|repair\|update\|refactor\|style\|chore\|perf\|docs\|optimize\|Release\|Merge\)" -i || true)
           if [ ! -z "$OTHERS" ]; then
-            CONTENT="$CONTENT\n\n### 🛠 Other Changes | 其他更改\n$OTHERS"
+            CONTENT="$CONTENT\n\n### 📋 Other Changes | 其他更改\n$OTHERS"
           fi
           
           # Handle multiline string for GitHub Actions output
