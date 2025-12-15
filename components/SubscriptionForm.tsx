@@ -41,6 +41,7 @@ const SubscriptionForm: React.FC<Props> = ({
   // Notes & Image
   const [notes, setNotes] = useState('');
   const [image, setImage] = useState<string | undefined>(undefined);
+  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -137,6 +138,32 @@ const SubscriptionForm: React.FC<Props> = ({
       {/* Modal */}
       <div className="relative w-full h-full md:h-auto md:max-h-[85vh] md:max-w-lg md:rounded-3xl bg-white shadow-2xl flex flex-col animate-in slide-in-from-bottom-4 md:zoom-in-95 duration-300 overflow-hidden">
         
+        {/* Full Screen Image Viewer Overlay */}
+        {isImageViewerOpen && image && (
+          <div 
+            className="absolute inset-0 z-[60] bg-black/95 flex items-center justify-center animate-in fade-in duration-200"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsImageViewerOpen(false);
+            }}
+          >
+             <div className="relative w-full h-full p-4 flex items-center justify-center">
+                <img 
+                  src={image} 
+                  alt="Full view" 
+                  className="max-w-full max-h-full object-contain"
+                />
+                <button 
+                  type="button"
+                  onClick={() => setIsImageViewerOpen(false)}
+                  className="absolute top-6 right-6 p-2 bg-white/10 rounded-full text-white backdrop-blur-sm hover:bg-white/20 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+             </div>
+          </div>
+        )}
+
         {/* Delete Confirmation */}
         {showDeleteConfirm && (
           <div 
@@ -326,12 +353,17 @@ const SubscriptionForm: React.FC<Props> = ({
              {/* Image Preview & Upload */}
              <div className="flex gap-3 overflow-x-auto pb-2">
                {image && (
-                 <div className="relative w-24 h-24 shrink-0 rounded-xl overflow-hidden border border-gray-200">
-                    <img src={image} alt="Attachment" className="w-full h-full object-cover" />
+                 <div className="relative w-24 h-24 shrink-0 rounded-xl overflow-hidden border border-gray-200 group">
+                    <img 
+                      src={image} 
+                      alt="Attachment" 
+                      className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity" 
+                      onClick={() => setIsImageViewerOpen(true)}
+                    />
                     <button 
                       type="button"
                       onClick={() => setImage(undefined)}
-                      className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
+                      className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 hover:bg-black/70 transition-colors"
                     >
                       <X className="w-3 h-3" />
                     </button>

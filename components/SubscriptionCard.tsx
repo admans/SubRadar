@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Subscription, BillingCycle, Language } from '../types';
-import { Calendar, RefreshCw } from 'lucide-react';
+import { Calendar, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import { Translation } from '../utils/translations';
 
 interface Props {
@@ -51,6 +51,35 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
     return t.inDays.replace('{days}', daysDiff.toString());
   };
 
+  const getCycleDisplay = () => {
+    const { cycle, customCycleDuration, customCycleUnit } = subscription;
+
+    if (cycle === BillingCycle.Monthly) return ` / ${t.mo}`;
+    if (cycle === BillingCycle.Quarterly) return ` / ${t.qtr}`;
+    if (cycle === BillingCycle.Yearly) return ` / ${t.yr}`;
+
+    if (cycle === BillingCycle.Custom && customCycleDuration && customCycleUnit) {
+      const isPlural = customCycleDuration > 1;
+      let unitLabel = '';
+
+      switch (customCycleUnit) {
+        case 'day': unitLabel = isPlural ? t.days : t.day; break;
+        case 'week': unitLabel = isPlural ? t.weeks : t.week; break;
+        case 'month': unitLabel = isPlural ? t.months : t.month; break;
+        case 'year': unitLabel = isPlural ? t.years : t.year; break;
+      }
+
+      // Convert English units to lowercase for cleaner aesthetic (e.g. "Days" -> "days")
+      if (language === 'en') {
+        unitLabel = unitLabel.toLowerCase();
+      }
+
+      return ` / ${customCycleDuration} ${unitLabel}`;
+    }
+
+    return ` / ${t.mo}`;
+  };
+
   const currencySymbol = subscription.currency === 'CNY' ? '¥' : '$';
 
   const handleRenewClick = (e: React.MouseEvent) => {
@@ -77,8 +106,8 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
             <span className={`text-xl font-bold ${textColor}`}>
               {currencySymbol}{subscription.price.toFixed(2)}
             </span>
-            <span className="text-xs text-gray-500 font-medium">
-              / {subscription.cycle === BillingCycle.Monthly ? t.mo : t.yr}
+            <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+              {getCycleDisplay()}
             </span>
           </div>
 
@@ -88,6 +117,14 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
               <span>{t.balanceLabel}:</span>
               <span className="text-gray-700">{currencySymbol}{subscription.accountBalance.toFixed(2)}</span>
             </div>
+          )}
+
+          {/* Image Attachment Indicator */}
+          {subscription.image && (
+             <div className="mt-1 flex items-center text-primary-600 text-[10px] font-medium bg-primary-50 self-start px-1.5 py-0.5 rounded-md">
+               <ImageIcon className="w-3 h-3 mr-1" />
+               <span className="opacity-90">{t.image}</span> 
+             </div>
           )}
         </div>
         
