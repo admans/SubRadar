@@ -1,11 +1,17 @@
 name: Build Android APK
 
 on:
+  # Trigger on Tag push (Standard way)
   push:
-    branches: [ "main" ]
     tags:
       - 'v*'
+  # Trigger manually from GitHub UI (Easier way)
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version Tag (e.g. v1.3.0)'
+        required: true
+        default: 'v1.3.0'
 
 jobs:
   build-android:
@@ -20,13 +26,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # Removed cache: 'npm' because package-lock.json is missing
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
+
+      # 1. Determine the version name based on how this was triggered
+      - name: Set Version Variable
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION_TAG=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          else
+            echo "VERSION_TAG=${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
 
       - name: Install Dependencies
         run: npm install
@@ -35,7 +50,6 @@ jobs:
         run: npm run build
 
       - name: Initialize Capacitor Android
-        # We initialize Android platform on the fly for the CI to ensure a fresh build environment
         run: |
           npx cap add android
           npx cap sync
@@ -45,31 +59,29 @@ jobs:
           cd android
           ./gradlew assembleDebug
 
+      # 2. Rename APK using the determined version
       - name: Rename APK
-        # Renames 'app-debug.apk' to 'SubRadar-v1.3.0.apk' (or whatever the tag/branch is)
         run: |
           cd android/app/build/outputs/apk/debug/
-          mv app-debug.apk SubRadar-${{ github.ref_name }}.apk
+          mv app-debug.apk SubRadar-${{ env.VERSION_TAG }}.apk
 
-      - name: Upload APK Artifact
-        # Note: GitHub Actions Artifacts are ALWAYS downloaded as .zip from the Actions Summary page.
-        # To get the raw .apk, please check the "Releases" page after a tag push.
-        uses: actions/upload-artifact@v4
-        with:
-          name: SubRadar-${{ github.ref_name }}-APK
-          path: android/app/build/outputs/apk/debug/SubRadar-${{ github.ref_name }}.apk
-
+      # 3. Create Release (Runs on Tag OR Manual Trigger)
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v1
         with:
-          # This uploads the raw .apk file to the Release page
-          files: android/app/build/outputs/apk/debug/SubRadar-${{ github.ref_name }}.apk
-          name: SubRadar ${{ github.ref_name }}
+          # If manual, this forces a tag to be created on the current commit
+          tag_name: ${{ env.VERSION_TAG }}
+          name: SubRadar ${{ env.VERSION_TAG }}
+          files: android/app/build/outputs/apk/debug/SubRadar-${{ env.VERSION_TAG }}.apk
           body: |
-            ## 📱 Android APK
+            ## 📱 Android APK Update
             
-            Install **SubRadar-${{ github.ref_name }}.apk** on your Android device.
+            Version: **${{ env.VERSION_TAG }}**
             
-            *(Note: Since this is a self-signed debug build, you may need to allow installation from unknown sources)*
+            Download **SubRadar-${{ env.VERSION_TAG }}.apk** below.
+            
+            *(Self-signed debug build)*
+          draft: false
+          prerelease: false
           generate_release_notes: true
