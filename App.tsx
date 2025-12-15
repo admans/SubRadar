@@ -9,8 +9,8 @@ import SubscriptionForm from './components/SubscriptionForm';
 import SubscriptionCard from './components/SubscriptionCard';
 import { getTranslation } from './utils/translations';
 
-// Standard Animation Duration
-const ANIMATION_DURATION = 300;
+// Standard Animation Duration - slightly longer for smoother morph
+const ANIMATION_DURATION = 350;
 
 // Helper to generate numeric ID from string UUID for LocalNotifications
 const hashCode = (str: string) => {
@@ -519,8 +519,9 @@ const App: React.FC = () => {
           </div>
         </header>
 
+        {/* IMPORTANT: Added min-h-[calc(100%+1px)] to ensure scrollable area exceeds viewport for overscroll physics */}
         <main className="flex-1 overflow-y-auto w-full max-w-5xl mx-auto px-4 pt-6 pb-24 overscroll-y-contain">
-          <div className="animate-in fade-in duration-300 pb-[env(safe-area-inset-bottom)] min-h-[100.5%]">
+          <div className="animate-in fade-in duration-300 pb-[env(safe-area-inset-bottom)] min-h-[calc(100%+1px)]">
             {subscriptions.length === 0 ? (
               <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
                 <div className="w-24 h-24 bg-surface-variant dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
@@ -584,7 +585,7 @@ const App: React.FC = () => {
 
         {/* Settings Content */}
         <div className="flex-1 overflow-y-auto overscroll-y-contain">
-          <div className="max-w-xl mx-auto px-4 pt-6 space-y-6 pb-12 pb-[calc(3rem+env(safe-area-inset-bottom))]">
+          <div className="max-w-xl mx-auto px-4 pt-6 space-y-6 pb-12 pb-[calc(3rem+env(safe-area-inset-bottom))] min-h-[calc(100%+1px)]">
 
             {/* Appearance / Theme */}
              <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-gray-50 dark:border-slate-800 transition-colors">
@@ -674,7 +675,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg dark:text-gray-100">{t.about}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.5.1</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.5.2</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 dark:text-gray-500 leading-relaxed">
