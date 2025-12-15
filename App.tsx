@@ -46,8 +46,13 @@ const App: React.FC = () => {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   
+  // Animation State
+  const [formOriginRect, setFormOriginRect] = useState<DOMRect | null>(null);
+
   // Search State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isSearchAnimating, setIsSearchAnimating] = useState(false); // Controls the CSS animation state
+  const [searchOriginRect, setSearchOriginRect] = useState<DOMRect | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Gesture State
@@ -55,6 +60,7 @@ const App: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const settingsContentRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const stateRef = useRef({ isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen });
 
@@ -98,20 +104,16 @@ const App: React.FC = () => {
 
       // 2. Configure Status Bar (Native Mode - No Overlay)
       try {
-        // Disable overlay: App starts BELOW the status bar
         await StatusBar.setOverlaysWebView({ overlay: false });
         
         if (effectiveTheme === 'dark') {
            await StatusBar.setStyle({ style: Style.Dark });
-           // Set background color to match Slate-950 (#020617)
            await StatusBar.setBackgroundColor({ color: '#020617' });
         } else {
            await StatusBar.setStyle({ style: Style.Light });
-           // Set background color to match Surface (#f8fafc)
            await StatusBar.setBackgroundColor({ color: '#f8fafc' });
         }
       } catch (e) {
-        // Ignore errors in browser environment
         console.debug('StatusBar not available');
       }
     };
@@ -141,14 +143,16 @@ const App: React.FC = () => {
         if (isDeleteConfirmOpen) {
           setIsDeleteConfirmOpen(false);
         } else if (isFormOpen) {
+          // Trigger close animation is handled inside SubscriptionForm usually, 
+          // but for hardware back, we might just close it abruptly or need a ref to trigger animation.
+          // For MVP, simple close is acceptable, or we can improve this later.
           setIsFormOpen(false);
           setEditingSub(null);
         } else if (isSettingsOpen) {
           setIsSettingsOpen(false);
           setDragX(0);
         } else if (isSearchOpen) {
-          setIsSearchOpen(false);
-          setSearchQuery('');
+          handleCloseSearch();
         } else {
           CapacitorApp.exitApp();
         }
@@ -401,16 +405,49 @@ const App: React.FC = () => {
     storage.saveSettings(newSettings);
   };
 
+  // --- Animation & Interaction Handlers ---
+
+  const handleOpenSearch = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setSearchOriginRect(rect);
+    setIsSearchOpen(true);
+    // Slight delay to allow DOM to render before animating in
+    requestAnimationFrame(() => {
+       setIsSearchAnimating(true);
+    });
+  };
+
+  const handleCloseSearch = () => {
+    setIsSearchAnimating(false);
+    // Wait for animation to finish before removing from DOM
+    setTimeout(() => {
+      setIsSearchOpen(false);
+      setSearchQuery('');
+    }, 300); // Match CSS transition duration
+  };
+
+  const handleFabClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setFormOriginRect(rect);
+    setEditingSub(null);
+    setIsFormOpen(true);
+  };
+
+  const handleCardClick = (sub: Subscription, e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setFormOriginRect(rect);
+    setEditingSub(sub);
+    setIsFormOpen(true);
+  };
+
   const closeForm = () => {
+    // We pass this function to the form, which will handle the exit animation
+    // and then call the actual state update.
     setIsFormOpen(false);
     setEditingSub(null);
     setIsDeleteConfirmOpen(false);
-  };
-
-  const closeSearch = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsSearchOpen(false);
-    setSearchQuery('');
   };
 
   return (
@@ -422,13 +459,12 @@ const App: React.FC = () => {
         style={{ transformOrigin: 'center top' }}
         onClick={() => isSettingsOpen && setIsSettingsOpen(false)}
       >
-        <header className="shrink-0 z-20 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300">
-          <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px]">
+        <header className="shrink-0 z-20 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300 relative">
+          <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px] relative overflow-hidden">
             
-            {/* Conditional Header Content: Title vs Search Bar */}
-            {!isSearchOpen ? (
-              <>
-                <div className="flex flex-col animate-in fade-in duration-200">
+            {/* Standard Header Content */}
+            <div className={`flex justify-between items-center w-full transition-opacity duration-200 ${isSearchOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                <div className="flex flex-col">
                   <h1 className="text-2xl font-bold bg-gradient-to-br from-primary-700 to-primary-500 dark:from-primary-400 dark:to-primary-600 bg-clip-text text-transparent">
                     {t.appName}
                   </h1>
@@ -439,7 +475,7 @@ const App: React.FC = () => {
                 
                 <div className="flex items-center gap-2">
                    <button 
-                    onClick={(e) => { e.stopPropagation(); setIsSearchOpen(true); }}
+                    onClick={handleOpenSearch}
                     className="p-3 rounded-full hover:bg-surface-variant dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300 active:scale-90 transition-transform"
                   >
                     <Search className="w-6 h-6" />
@@ -451,26 +487,38 @@ const App: React.FC = () => {
                     <Settings className="w-6 h-6" />
                   </button>
                 </div>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center gap-2 animate-in slide-in-from-right-4 duration-200">
-                <div className="flex-1 relative">
-                  <input 
-                    autoFocus
-                    type="text"
-                    placeholder={t.searchPlaceholder}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-gray-100 dark:bg-slate-800 rounded-xl py-2.5 pl-10 pr-4 text-base focus:outline-none focus:ring-2 focus:ring-primary-400 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
-                  />
-                  <Search className="w-5 h-5 text-gray-400 dark:text-gray-500 absolute left-3 top-2.5" />
+            </div>
+
+            {/* Animated Search Overlay */}
+            {isSearchOpen && (
+              <div 
+                className={`absolute inset-0 flex items-center px-4 bg-surface dark:bg-slate-950 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${isSearchAnimating ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}
+                style={{
+                  transformOrigin: searchOriginRect 
+                    ? `${searchOriginRect.left + searchOriginRect.width / 2}px ${searchOriginRect.top + searchOriginRect.height / 2}px` 
+                    : 'center right'
+                }}
+              >
+                <div className="flex-1 flex items-center gap-2">
+                  <div className="flex-1 relative">
+                    <input 
+                      ref={searchInputRef}
+                      autoFocus
+                      type="text"
+                      placeholder={t.searchPlaceholder}
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-gray-100 dark:bg-slate-800 rounded-xl py-2.5 pl-10 pr-4 text-base focus:outline-none focus:ring-2 focus:ring-primary-400 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                    />
+                    <Search className="w-5 h-5 text-gray-400 dark:text-gray-500 absolute left-3 top-2.5" />
+                  </div>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleCloseSearch(); }}
+                    className="p-2 rounded-full hover:bg-surface-variant dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300"
+                  >
+                     <X className="w-6 h-6" />
+                  </button>
                 </div>
-                <button 
-                  onClick={closeSearch}
-                  className="p-2 rounded-full hover:bg-surface-variant dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300"
-                >
-                   <X className="w-6 h-6" />
-                </button>
               </div>
             )}
           </div>
@@ -497,7 +545,7 @@ const App: React.FC = () => {
                   <SubscriptionCard 
                     key={sub.id} 
                     subscription={sub} 
-                    onClick={(s) => { setEditingSub(s); setIsFormOpen(true); }} 
+                    onClick={(s, e) => handleCardClick(s, e)} 
                     onRenew={handleRenewSubscription}
                     t={t}
                     language={settings.language}
@@ -511,7 +559,7 @@ const App: React.FC = () => {
       
       {/* Floating Action Button */}
       <button
-        onClick={(e) => { e.stopPropagation(); setEditingSub(null); setIsFormOpen(true); }}
+        onClick={handleFabClick}
         className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 dark:shadow-black/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20 mb-[env(safe-area-inset-bottom)]"
       >
         <Plus className="w-8 h-8" strokeWidth={2.5} />
@@ -655,6 +703,7 @@ const App: React.FC = () => {
           t={t}
           showDeleteConfirm={isDeleteConfirmOpen}
           setShowDeleteConfirm={setIsDeleteConfirmOpen}
+          originRect={formOriginRect}
         />
       )}
     </div>
