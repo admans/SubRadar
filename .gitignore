@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Testing
+coverage
+
+# Production
+dist
+build
+
+# Misc
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Capacitor / Android / iOS
+# We ignore the native platforms because the CI/CD workflow builds them on the fly.
+# If you decide to modify native code (Java/Swift) later, remove these lines.
+android/
+ios/
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs
+*.njsproj
+*.sln
+*.sw?

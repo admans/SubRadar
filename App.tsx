@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages } from 'lucide-react';
+import { App as CapacitorApp } from '@capacitor/app';
 import { Subscription, AppSettings, Language } from './types';
 import * as storage from './services/storageService';
 import SubscriptionForm from './components/SubscriptionForm';
@@ -15,11 +16,68 @@ const App: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
 
+  // Refs to access latest state inside the event listener closure
+  const stateRef = useRef({ currentView, isFormOpen });
+
   // Load initial data
   useEffect(() => {
     setSubscriptions(storage.getSubscriptions());
     setSettings(storage.getSettings());
   }, []);
+
+  // Sync state to ref for back button listener
+  useEffect(() => {
+    stateRef.current = { currentView, isFormOpen };
+  }, [currentView, isFormOpen]);
+
+  // Handle Hardware Back Button (Android)
+  useEffect(() => {
+    const handleBackButton = async () => {
+      CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+        const { currentView, isFormOpen } = stateRef.current;
+
+        if (isFormOpen) {
+          // If modal is open, close it
+          setIsFormOpen(false);
+          setEditingSub(null);
+        } else if (currentView === 'settings') {
+          // If in settings, go back to list
+          setCurrentView('list');
+        } else {
+          // If on main screen, exit app
+          CapacitorApp.exitApp();
+        }
+      });
+    };
+
+    handleBackButton();
+
+    return () => {
+      CapacitorApp.removeAllListeners();
+    };
+  }, []);
+
+  // Gesture handling for Swipe Back
+  const touchStartX = useRef<number | null>(null);
+  const minSwipeDistance = 50; // px
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.targetTouches[0].clientX;
+  };
+
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStartX.current) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    
+    const distance = touchEndX - touchStartX.current;
+    
+    // If swipe right (distance > min)
+    if (distance > minSwipeDistance) {
+      setCurrentView('list');
+    }
+    
+    touchStartX.current = null;
+  };
 
   const t = getTranslation(settings.language);
 
@@ -153,7 +211,11 @@ const App: React.FC = () => {
       {/* Main Content Area */}
       <main className="max-w-5xl mx-auto px-4 pt-6 transition-all duration-300">
         {currentView === 'settings' ? (
-          <div className="space-y-6 max-w-xl mx-auto animate-in slide-in-from-right-4 duration-300">
+          <div 
+            className="space-y-6 max-w-xl mx-auto animate-in slide-in-from-right-4 duration-300 min-h-[80vh]"
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+          >
             <h2 className="text-2xl font-bold px-1">{t.settings}</h2>
             
             {/* Language Settings */}
