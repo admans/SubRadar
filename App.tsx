@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
-import { Subscription, AppSettings, Language } from './types';
+import { Subscription, AppSettings, Language, BillingCycle } from './types';
 import * as storage from './services/storageService';
 import SubscriptionForm from './components/SubscriptionForm';
 import SubscriptionCard from './components/SubscriptionCard';
@@ -137,6 +137,25 @@ const App: React.FC = () => {
     setEditingSub(null);
   };
 
+  const handleRenewSubscription = (sub: Subscription) => {
+    const currentDate = new Date(sub.nextBillingDate);
+    
+    if (sub.cycle === BillingCycle.Monthly) {
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    } else {
+      currentDate.setFullYear(currentDate.getFullYear() + 1);
+    }
+
+    // Format back to YYYY-MM-DD
+    const newDateStr = currentDate.toISOString().split('T')[0];
+    
+    const updatedSub = { ...sub, nextBillingDate: newDateStr };
+    const newSubs = subscriptions.map(s => s.id === sub.id ? updatedSub : s);
+    
+    setSubscriptions(newSubs);
+    storage.saveSubscriptions(newSubs);
+  };
+
   const handleToggleNotification = () => {
     const newSettings = { ...settings, notificationsEnabled: !settings.notificationsEnabled };
     setSettings(newSettings);
@@ -158,8 +177,9 @@ const App: React.FC = () => {
       {/* ================= MAIN LIST VIEW (Always Rendered) ================= */}
       {/* We apply a slight scale/dim effect when settings are open for a nice depth effect */}
       <div 
-        className={`h-full transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 rounded-3xl overflow-hidden' : ''}`}
+        className={`h-full transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 rounded-3xl overflow-hidden cursor-pointer' : ''}`}
         style={{ transformOrigin: 'center top' }}
+        onClick={() => isSettingsOpen && setIsSettingsOpen(false)}
       >
         <header className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100">
           <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center">
@@ -173,7 +193,7 @@ const App: React.FC = () => {
             </div>
             
             <button 
-              onClick={() => setIsSettingsOpen(true)}
+              onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); }}
               className="p-3 rounded-full hover:bg-surface-variant text-gray-600 active:scale-90 transition-transform"
             >
               <Settings className="w-6 h-6" />
@@ -198,6 +218,7 @@ const App: React.FC = () => {
                     key={sub.id} 
                     subscription={sub} 
                     onClick={(s) => { setEditingSub(s); setIsFormOpen(true); }} 
+                    onRenew={handleRenewSubscription}
                     t={t}
                     language={settings.language}
                   />
@@ -208,7 +229,7 @@ const App: React.FC = () => {
         </main>
 
         <button
-          onClick={() => { setEditingSub(null); setIsFormOpen(true); }}
+          onClick={(e) => { e.stopPropagation(); setEditingSub(null); setIsFormOpen(true); }}
           className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
         >
           <Plus className="w-8 h-8" strokeWidth={2.5} />

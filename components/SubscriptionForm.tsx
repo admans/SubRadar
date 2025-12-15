@@ -160,6 +160,7 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
                   <span className="text-gray-500 mr-2 font-medium">{currency === 'CNY' ? '¥' : '$'}</span>
                   <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
@@ -234,6 +235,7 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
               <span className="text-gray-400 mr-1 font-medium">{currency === 'CNY' ? '¥' : '$'}</span>
               <input
                 type="number"
+                inputMode="decimal"
                 step="0.01"
                 value={accountBalance}
                 onChange={(e) => setAccountBalance(e.target.value)}

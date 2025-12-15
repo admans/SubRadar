@@ -37,6 +37,8 @@ export const translations = {
     yearly: 'Yearly',
     mo: 'mo',
     yr: 'yr',
+    renew: 'Renew',
+    renewed: 'Renewed!',
     en: 'English',
     zh: '简体中文'
   },
@@ -76,6 +78,8 @@ export const translations = {
     yearly: '按年',
     mo: '月',
     yr: '年',
+    renew: '一键续费',
+    renewed: '已续费！',
     en: 'English',
     zh: '简体中文'
   }
