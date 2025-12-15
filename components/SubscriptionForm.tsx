@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Subscription, BillingCycle, Currency } from '../types';
-import { X, Check, Calendar, DollarSign, RefreshCw, Wallet, Clock, Trash2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Subscription, BillingCycle, Currency, CycleUnit } from '../types';
+import { X, Check, Calendar, RefreshCw, Wallet, Clock, Trash2, Image as ImageIcon, Upload } from 'lucide-react';
 import { Translation } from '../utils/translations';
 
 interface Props {
@@ -26,12 +26,22 @@ const SubscriptionForm: React.FC<Props> = ({
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [currency, setCurrency] = useState<Currency>('CNY');
+  
+  // Cycle State
   const [cycle, setCycle] = useState<BillingCycle>(BillingCycle.Monthly);
+  const [customDuration, setCustomDuration] = useState<string>('1');
+  const [customUnit, setCustomUnit] = useState<CycleUnit>('month');
+
   const [nextBillingDate, setNextBillingDate] = useState('');
   
-  // New optional fields
+  // Optional Fields
   const [startDate, setStartDate] = useState('');
   const [accountBalance, setAccountBalance] = useState('');
+  
+  // Notes & Image
+  const [notes, setNotes] = useState('');
+  const [image, setImage] = useState<string | undefined>(undefined);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (initialData) {
@@ -42,10 +52,17 @@ const SubscriptionForm: React.FC<Props> = ({
       setNextBillingDate(initialData.nextBillingDate);
       setStartDate(initialData.startDate || '');
       setAccountBalance(initialData.accountBalance ? initialData.accountBalance.toString() : '');
+      
+      // Custom cycle data
+      if (initialData.cycle === BillingCycle.Custom) {
+        setCustomDuration(initialData.customCycleDuration?.toString() || '1');
+        setCustomUnit(initialData.customCycleUnit || 'month');
+      }
+
+      setNotes(initialData.notes || '');
+      setImage(initialData.image);
     } else {
-      // Default to today
       setNextBillingDate(new Date().toISOString().split('T')[0]);
-      // Default currency is already CNY via useState init
     }
   }, [initialData]);
 
@@ -58,36 +75,80 @@ const SubscriptionForm: React.FC<Props> = ({
       price: parseFloat(price),
       currency,
       cycle,
+      customCycleDuration: cycle === BillingCycle.Custom ? parseInt(customDuration) : undefined,
+      customCycleUnit: cycle === BillingCycle.Custom ? customUnit : undefined,
       nextBillingDate,
       startDate: startDate || undefined,
-      accountBalance: accountBalance ? parseFloat(accountBalance) : undefined
+      accountBalance: accountBalance ? parseFloat(accountBalance) : undefined,
+      notes: notes || undefined,
+      image: image || undefined
     });
   };
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Basic client-side compression via canvas to avoid 5MB localStorage limit
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800; // Resize large images
+          const scaleSize = MAX_WIDTH / img.width;
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * scaleSize;
+          
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          // Compress to JPEG 0.7 quality
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          setImage(dataUrl);
+        };
+        img.src = event.target?.result as string;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const cycleOptions = [
+    { value: BillingCycle.Monthly, label: t.monthly },
+    { value: BillingCycle.Quarterly, label: t.quarterly },
+    { value: BillingCycle.Yearly, label: t.yearly },
+    { value: BillingCycle.Custom, label: t.custom },
+  ];
+
+  const unitOptions = [
+    { value: 'day', label: t.day },
+    { value: 'week', label: t.week },
+    { value: 'month', label: t.month },
+    { value: 'year', label: t.year },
+  ];
+
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
-      {/* Backdrop for Tablet/Desktop */}
+      {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity" 
         onClick={onCancel}
       />
 
-      {/* Modal Container */}
+      {/* Modal */}
       <div className="relative w-full h-full md:h-auto md:max-h-[85vh] md:max-w-lg md:rounded-3xl bg-white shadow-2xl flex flex-col animate-in slide-in-from-bottom-4 md:zoom-in-95 duration-300 overflow-hidden">
         
-        {/* Delete Confirmation Overlay */}
+        {/* Delete Confirmation */}
         {showDeleteConfirm && (
           <div 
             className="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200"
             onClick={(e) => {
-              // Allow closing when clicking the backdrop
               e.stopPropagation();
               setShowDeleteConfirm(false);
             }}
           >
             <div 
               className="w-full max-w-sm bg-white rounded-3xl shadow-xl border border-gray-100 p-6 flex flex-col items-center text-center"
-              onClick={(e) => e.stopPropagation()} // Prevent closing when clicking the modal content
+              onClick={(e) => e.stopPropagation()} 
             >
               <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4 text-red-500">
                 <Trash2 className="w-6 h-6" />
@@ -126,13 +187,13 @@ const SubscriptionForm: React.FC<Props> = ({
           <h2 className="text-lg font-medium text-gray-800">
             {initialData ? t.editSub : t.newSub}
           </h2>
-          <div className="w-10" /> {/* Spacer for centering */}
+          <div className="w-10" /> 
         </div>
 
-        {/* Scrollable Form Content */}
+        {/* Form Content */}
         <form onSubmit={handleSubmit} className="flex-1 p-6 space-y-6 overflow-y-auto">
           
-          {/* Name Input */}
+          {/* Name - NO AUTO FOCUS */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-primary-600 ml-1">{t.serviceName}</label>
             <div className="bg-surface-variant rounded-2xl px-4 py-3 focus-within:ring-2 focus-within:ring-primary-500 transition-all">
@@ -142,15 +203,14 @@ const SubscriptionForm: React.FC<Props> = ({
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t.namePlaceholder}
                 className="w-full bg-transparent border-none outline-none text-xl text-gray-800 placeholder-gray-400"
-                autoFocus={!initialData}
+                // autoFocus removed here
                 required
               />
             </div>
           </div>
 
-          {/* Currency & Price Input Group */}
+          {/* Price & Currency */}
           <div className="grid grid-cols-3 gap-3">
-              {/* Currency */}
               <div className="col-span-1 space-y-2">
                   <label className="text-sm font-medium text-primary-600 ml-1">{t.currency}</label>
                   <div className="bg-surface-variant rounded-2xl p-1 flex">
@@ -171,7 +231,6 @@ const SubscriptionForm: React.FC<Props> = ({
                   </div>
               </div>
 
-              {/* Price */}
               <div className="col-span-2 space-y-2">
               <label className="text-sm font-medium text-primary-600 ml-1">{t.price}</label>
               <div className="flex items-center bg-surface-variant rounded-2xl px-4 py-3 focus-within:ring-2 focus-within:ring-primary-500 transition-all">
@@ -190,26 +249,51 @@ const SubscriptionForm: React.FC<Props> = ({
               </div>
           </div>
 
-          {/* Cycle Selection */}
+          {/* Billing Cycle - SCROLLABLE or GRID */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-primary-600 ml-1">{t.billingCycle}</label>
-            <div className="flex gap-3">
-              {[BillingCycle.Monthly, BillingCycle.Yearly].map((c) => (
+            <div className="grid grid-cols-2 gap-2">
+              {cycleOptions.map((opt) => (
                 <button
-                  key={c}
+                  key={opt.value}
                   type="button"
-                  onClick={() => setCycle(c)}
-                  className={`flex-1 py-3 px-4 rounded-2xl border text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2
-                    ${cycle === c 
+                  onClick={() => setCycle(opt.value)}
+                  className={`py-3 px-2 rounded-xl border text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1.5
+                    ${cycle === opt.value 
                       ? 'bg-primary-100 border-primary-200 text-primary-800 shadow-sm' 
                       : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
                 >
-                  <RefreshCw className={`w-4 h-4 ${cycle === c ? 'animate-spin-slow' : ''}`} />
-                  {c === BillingCycle.Monthly ? t.monthly : t.yearly}
+                  <RefreshCw className={`w-3.5 h-3.5 ${cycle === opt.value ? 'animate-spin-slow' : ''}`} />
+                  {opt.label}
                 </button>
               ))}
             </div>
+            
+            {/* Custom Cycle Input */}
+            {cycle === BillingCycle.Custom && (
+              <div className="flex gap-3 mt-2 animate-in slide-in-from-top-2 fade-in">
+                 <div className="flex items-center bg-surface-variant rounded-2xl px-4 py-2 flex-1">
+                   <span className="text-gray-500 mr-2 text-sm">{t.every}</span>
+                   <input 
+                      type="number"
+                      min="1"
+                      value={customDuration}
+                      onChange={(e) => setCustomDuration(e.target.value)}
+                      className="w-full bg-transparent border-none outline-none text-gray-800 font-medium text-center"
+                   />
+                 </div>
+                 <select 
+                    value={customUnit}
+                    onChange={(e) => setCustomUnit(e.target.value as CycleUnit)}
+                    className="bg-surface-variant rounded-2xl px-4 py-2 flex-1 border-none outline-none text-gray-800 font-medium appearance-none"
+                 >
+                   {unitOptions.map(u => (
+                     <option key={u.value} value={u.value}>{u.label}</option>
+                   ))}
+                 </select>
+              </div>
+            )}
           </div>
 
           {/* Date Input */}
@@ -226,12 +310,55 @@ const SubscriptionForm: React.FC<Props> = ({
               />
             </div>
           </div>
+          
+          <div className="h-px bg-gray-100 my-4" />
+
+          {/* Notes & Images */}
+          <div className="space-y-3">
+             <label className="text-sm font-medium text-gray-500 ml-1">{t.notes}</label>
+             <textarea 
+               value={notes}
+               onChange={(e) => setNotes(e.target.value)}
+               placeholder={t.notesPlaceholder}
+               className="w-full bg-surface-variant/50 rounded-2xl p-4 text-gray-700 min-h-[100px] border-none outline-none focus:ring-2 focus:ring-primary-200 resize-none"
+             />
+             
+             {/* Image Preview & Upload */}
+             <div className="flex gap-3 overflow-x-auto pb-2">
+               {image && (
+                 <div className="relative w-24 h-24 shrink-0 rounded-xl overflow-hidden border border-gray-200">
+                    <img src={image} alt="Attachment" className="w-full h-full object-cover" />
+                    <button 
+                      type="button"
+                      onClick={() => setImage(undefined)}
+                      className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                 </div>
+               )}
+               
+               <button 
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-24 h-24 shrink-0 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 hover:border-primary-400 hover:text-primary-500 transition-colors bg-gray-50"
+               >
+                 <Upload className="w-6 h-6 mb-1" />
+                 <span className="text-[10px] font-medium">{t.addImage}</span>
+               </button>
+               <input 
+                 ref={fileInputRef}
+                 type="file"
+                 accept="image/*"
+                 className="hidden"
+                 onChange={handleImageUpload}
+               />
+             </div>
+          </div>
 
           <div className="h-px bg-gray-100 my-4" />
 
-          {/* Optional Fields Section */}
-          
-          {/* Start Date (Optional) */}
+          {/* Optional Fields */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-400 ml-1">{t.startDate}</label>
             <div className="flex items-center bg-surface-variant/50 rounded-2xl px-4 py-3 focus-within:ring-2 focus-within:ring-primary-500 transition-all">
@@ -245,7 +372,6 @@ const SubscriptionForm: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Account Balance (Optional) */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-400 ml-1">{t.accountBalance}</label>
             <div className="flex items-center bg-surface-variant/50 rounded-2xl px-4 py-3 focus-within:ring-2 focus-within:ring-primary-500 transition-all">
@@ -265,7 +391,7 @@ const SubscriptionForm: React.FC<Props> = ({
 
         </form>
 
-        {/* Footer Actions */}
+        {/* Footer */}
         <div className="p-4 bg-white border-t border-gray-100 shrink-0 flex flex-col gap-3">
           <button
             onClick={handleSubmit}

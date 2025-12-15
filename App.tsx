@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages } from 'lucide-react';
+import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages, Search, X } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Subscription, AppSettings, Language, BillingCycle } from './types';
@@ -19,6 +19,24 @@ const hashCode = (str: string) => {
   return Math.abs(hash);
 };
 
+// Helper for date calculations
+const addCycleToDate = (date: Date, cycle: BillingCycle, customDuration?: number, customUnit?: string) => {
+  const d = new Date(date);
+  if (cycle === BillingCycle.Monthly) {
+    d.setMonth(d.getMonth() + 1);
+  } else if (cycle === BillingCycle.Quarterly) {
+    d.setMonth(d.getMonth() + 3);
+  } else if (cycle === BillingCycle.Yearly) {
+    d.setFullYear(d.getFullYear() + 1);
+  } else if (cycle === BillingCycle.Custom && customDuration && customUnit) {
+    if (customUnit === 'day') d.setDate(d.getDate() + customDuration);
+    if (customUnit === 'week') d.setDate(d.getDate() + (customDuration * 7));
+    if (customUnit === 'month') d.setMonth(d.getMonth() + customDuration);
+    if (customUnit === 'year') d.setFullYear(d.getFullYear() + customDuration);
+  }
+  return d;
+};
+
 const App: React.FC = () => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [settings, setSettings] = useState<AppSettings>({ notificationsEnabled: false, language: 'en' });
@@ -26,6 +44,10 @@ const App: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
+  
+  // Search State
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Gesture State
   const [dragX, setDragX] = useState(0);
@@ -33,7 +55,7 @@ const App: React.FC = () => {
   const touchStartX = useRef<number | null>(null);
   const settingsContentRef = useRef<HTMLDivElement>(null);
 
-  const stateRef = useRef({ isSettingsOpen, isFormOpen, isDeleteConfirmOpen });
+  const stateRef = useRef({ isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen });
 
   // 1. Initialize Data & Auto-Renew Logic
   useEffect(() => {
@@ -47,12 +69,10 @@ const App: React.FC = () => {
     setSubscriptions(updatedSubs);
     if (hasChanges) {
       storage.saveSubscriptions(updatedSubs);
-      // If auto-renew changed dates, we might need to reschedule notifications
       if (loadedSettings.notificationsEnabled) {
         scheduleNotifications(updatedSubs);
       }
     } else {
-      // If no changes but notifications enabled, ensure they are scheduled (e.g. first run after update)
       if (loadedSettings.notificationsEnabled) {
         scheduleNotifications(updatedSubs);
       }
@@ -60,14 +80,14 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    stateRef.current = { isSettingsOpen, isFormOpen, isDeleteConfirmOpen };
-  }, [isSettingsOpen, isFormOpen, isDeleteConfirmOpen]);
+    stateRef.current = { isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen };
+  }, [isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen]);
 
   // Hardware Back Button
   useEffect(() => {
     const handleBackButton = async () => {
       CapacitorApp.addListener('backButton', ({ canGoBack }) => {
-        const { isSettingsOpen, isFormOpen, isDeleteConfirmOpen } = stateRef.current;
+        const { isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen } = stateRef.current;
 
         if (isDeleteConfirmOpen) {
           setIsDeleteConfirmOpen(false);
@@ -77,6 +97,9 @@ const App: React.FC = () => {
         } else if (isSettingsOpen) {
           setIsSettingsOpen(false);
           setDragX(0);
+        } else if (isSearchOpen) {
+          setIsSearchOpen(false);
+          setSearchQuery('');
         } else {
           CapacitorApp.exitApp();
         }
@@ -88,7 +111,6 @@ const App: React.FC = () => {
 
   // --- Auto Renew Logic ---
   const checkAutoRenewals = (subs: Subscription[]) => {
-    // Get local date string YYYY-MM-DD
     const now = new Date();
     const offset = now.getTimezoneOffset() * 60000;
     const localTodayStr = (new Date(now.getTime() - offset)).toISOString().slice(0, 10);
@@ -108,24 +130,18 @@ const App: React.FC = () => {
 
       // Start Auto-Renew Loop
       let currentSub = { ...sub };
-      // Safety limit to prevent infinite loops (e.g. max 5 years catch up)
+      // Safety limit
       for (let i = 0; i < 60; i++) {
-        // If we have advanced enough into the future, stop
         if (currentSub.nextBillingDate > localTodayStr) break;
-        // If we ran out of money mid-loop, stop
         if (currentSub.accountBalance < currentSub.price) break;
 
         // 1. Deduct Balance
         currentSub.accountBalance = Number((currentSub.accountBalance - currentSub.price).toFixed(2));
         
-        // 2. Advance Date
+        // 2. Advance Date (using shared helper)
         const d = new Date(currentSub.nextBillingDate);
-        if (currentSub.cycle === BillingCycle.Monthly) {
-          d.setMonth(d.getMonth() + 1);
-        } else {
-          d.setFullYear(d.getFullYear() + 1);
-        }
-        currentSub.nextBillingDate = d.toISOString().split('T')[0];
+        const newDate = addCycleToDate(d, currentSub.cycle, currentSub.customCycleDuration, currentSub.customCycleUnit);
+        currentSub.nextBillingDate = newDate.toISOString().split('T')[0];
         
         hasChanges = true;
       }
@@ -138,25 +154,21 @@ const App: React.FC = () => {
   // --- Notification Logic ---
   const scheduleNotifications = async (subs: Subscription[]) => {
     try {
-      // 1. Cancel existing
       await LocalNotifications.cancel({ notifications: subs.map(s => ({ id: hashCode(s.id) })) });
       
-      // 2. Schedule new
       const notifications = subs.map(sub => {
         const date = new Date(sub.nextBillingDate);
-        // Set to 9:00 AM on due date
         date.setHours(9, 0, 0, 0); 
         
-        // If date is in past, don't schedule (or it will fire immediately/improperly)
         if (date.getTime() < Date.now()) return null;
 
         return {
           id: hashCode(sub.id),
           title: t.appName,
-          body: t.dueToday.replace('Today', sub.name) + `: ${sub.name}`, // "Due today: Netflix"
+          body: t.dueToday.replace('Today', sub.name) + `: ${sub.name}`,
           schedule: { at: date },
           sound: undefined,
-          smallIcon: 'ic_stat_icon_config_sample', // Default capacitor icon usually
+          smallIcon: 'ic_stat_icon_config_sample',
           extra: { subId: sub.id }
         };
       }).filter(n => n !== null);
@@ -171,17 +183,14 @@ const App: React.FC = () => {
   };
 
   const handleToggleNotification = async () => {
-    // Turning OFF
     if (settings.notificationsEnabled) {
       const newSettings = { ...settings, notificationsEnabled: false };
       setSettings(newSettings);
       storage.saveSettings(newSettings);
-      // Cancel all
       LocalNotifications.cancel({ notifications: subscriptions.map(s => ({ id: hashCode(s.id) })) });
       return;
     }
 
-    // Turning ON - Request Permission
     try {
       const result = await LocalNotifications.requestPermissions();
       if (result.display === 'granted') {
@@ -190,16 +199,12 @@ const App: React.FC = () => {
         storage.saveSettings(newSettings);
         scheduleNotifications(subscriptions);
       } else {
-        // Denied
         const newSettings = { ...settings, notificationsEnabled: false };
         setSettings(newSettings);
         storage.saveSettings(newSettings);
-        // Optional: Alert user
         alert('Permission denied. Please enable notifications in system settings.');
       }
     } catch (e) {
-      console.error("Error requesting notification permission", e);
-      // Fallback for web testing if plugin missing
       const newSettings = { ...settings, notificationsEnabled: false };
       setSettings(newSettings);
     }
@@ -232,18 +237,40 @@ const App: React.FC = () => {
 
   const t = getTranslation(settings.language);
 
+  // Sorting & Filtering
   const sortedSubscriptions = useMemo(() => {
-    return [...subscriptions].sort((a, b) => {
+    let filtered = subscriptions;
+    if (searchQuery.trim()) {
+      const lowerQuery = searchQuery.toLowerCase();
+      filtered = subscriptions.filter(s => s.name.toLowerCase().includes(lowerQuery));
+    }
+
+    return [...filtered].sort((a, b) => {
       return new Date(a.nextBillingDate).getTime() - new Date(b.nextBillingDate).getTime();
     });
-  }, [subscriptions]);
+  }, [subscriptions, searchQuery]);
 
   const monthlyCosts = useMemo(() => {
     return subscriptions.reduce((acc, sub) => {
-      const amount = sub.cycle === 'Monthly' ? sub.price : sub.price / 12;
+      let monthlyPrice = 0;
+      if (sub.cycle === BillingCycle.Monthly) monthlyPrice = sub.price;
+      else if (sub.cycle === BillingCycle.Quarterly) monthlyPrice = sub.price / 3;
+      else if (sub.cycle === BillingCycle.Yearly) monthlyPrice = sub.price / 12;
+      else if (sub.cycle === BillingCycle.Custom && sub.customCycleDuration && sub.customCycleUnit) {
+        // Approximate calculation for custom cycles
+        let days = 30; // default divisor
+        if (sub.customCycleUnit === 'day') days = sub.customCycleDuration;
+        if (sub.customCycleUnit === 'week') days = sub.customCycleDuration * 7;
+        if (sub.customCycleUnit === 'month') days = sub.customCycleDuration * 30;
+        if (sub.customCycleUnit === 'year') days = sub.customCycleDuration * 365;
+        monthlyPrice = (sub.price / days) * 30;
+      } else {
+        monthlyPrice = sub.price; // Fallback
+      }
+
       const currency = sub.currency || 'USD';
-      if (currency === 'CNY') acc.CNY += amount;
-      else acc.USD += amount;
+      if (currency === 'CNY') acc.CNY += monthlyPrice;
+      else acc.USD += monthlyPrice;
       return acc;
     }, { CNY: 0, USD: 0 });
   }, [subscriptions]);
@@ -264,7 +291,6 @@ const App: React.FC = () => {
       newSubs = [...subscriptions, { id: crypto.randomUUID(), createdAt: Date.now(), ...subData }];
     }
     
-    // Check auto-renew immediately for the new/edited sub in case user set a past date with balance
     const { updatedSubs } = checkAutoRenewals(newSubs);
     
     setSubscriptions(updatedSubs);
@@ -284,7 +310,6 @@ const App: React.FC = () => {
     setSubscriptions(newSubs);
     storage.saveSubscriptions(newSubs);
     
-    // Remove notification for deleted sub
     if (settings.notificationsEnabled) {
       LocalNotifications.cancel({ notifications: [{ id: hashCode(id) }] });
     }
@@ -296,13 +321,8 @@ const App: React.FC = () => {
 
   const handleRenewSubscription = (sub: Subscription) => {
     const currentDate = new Date(sub.nextBillingDate);
-    
-    if (sub.cycle === BillingCycle.Monthly) {
-      currentDate.setMonth(currentDate.getMonth() + 1);
-    } else {
-      currentDate.setFullYear(currentDate.getFullYear() + 1);
-    }
-    const newDateStr = currentDate.toISOString().split('T')[0];
+    const newDate = addCycleToDate(currentDate, sub.cycle, sub.customCycleDuration, sub.customCycleUnit);
+    const newDateStr = newDate.toISOString().split('T')[0];
 
     let newBalance = sub.accountBalance;
     if (typeof sub.accountBalance === 'number' && sub.accountBalance >= sub.price) {
@@ -332,6 +352,12 @@ const App: React.FC = () => {
     setIsDeleteConfirmOpen(false);
   };
 
+  const closeSearch = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsSearchOpen(false);
+    setSearchQuery('');
+  };
+
   return (
     <div className="min-h-screen bg-surface text-gray-900 font-sans selection:bg-primary-200 overflow-hidden relative">
       
@@ -342,22 +368,56 @@ const App: React.FC = () => {
         onClick={() => isSettingsOpen && setIsSettingsOpen(false)}
       >
         <header className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100">
-          <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center">
-            <div className="flex flex-col">
-              <h1 className="text-2xl font-bold bg-gradient-to-br from-primary-700 to-primary-500 bg-clip-text text-transparent">
-                {t.appName}
-              </h1>
-              <span className="text-xs text-gray-500 font-medium">
-                {totalDisplay} {t.totalMonthly}
-              </span>
-            </div>
+          <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px]">
             
-            <button 
-              onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); }}
-              className="p-3 rounded-full hover:bg-surface-variant text-gray-600 active:scale-90 transition-transform"
-            >
-              <Settings className="w-6 h-6" />
-            </button>
+            {/* Conditional Header Content: Title vs Search Bar */}
+            {!isSearchOpen ? (
+              <>
+                <div className="flex flex-col animate-in fade-in duration-200">
+                  <h1 className="text-2xl font-bold bg-gradient-to-br from-primary-700 to-primary-500 bg-clip-text text-transparent">
+                    {t.appName}
+                  </h1>
+                  <span className="text-xs text-gray-500 font-medium">
+                    {totalDisplay} {t.totalMonthly}
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                   <button 
+                    onClick={(e) => { e.stopPropagation(); setIsSearchOpen(true); }}
+                    className="p-3 rounded-full hover:bg-surface-variant text-gray-600 active:scale-90 transition-transform"
+                  >
+                    <Search className="w-6 h-6" />
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); }}
+                    className="p-3 rounded-full hover:bg-surface-variant text-gray-600 active:scale-90 transition-transform"
+                  >
+                    <Settings className="w-6 h-6" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex items-center gap-2 animate-in slide-in-from-right-4 duration-200">
+                <div className="flex-1 relative">
+                  <input 
+                    autoFocus
+                    type="text"
+                    placeholder={t.searchPlaceholder}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-gray-100 rounded-xl py-2.5 pl-10 pr-4 text-base focus:outline-none focus:ring-2 focus:ring-primary-400"
+                  />
+                  <Search className="w-5 h-5 text-gray-400 absolute left-3 top-2.5" />
+                </div>
+                <button 
+                  onClick={closeSearch}
+                  className="p-2 rounded-full hover:bg-surface-variant text-gray-600"
+                >
+                   <X className="w-6 h-6" />
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
@@ -371,6 +431,11 @@ const App: React.FC = () => {
                 <h3 className="text-xl font-semibold text-gray-700">{t.noSubsTitle}</h3>
                 <p className="text-gray-500 max-w-[200px]">{t.noSubsDesc}</p>
               </div>
+            ) : sortedSubscriptions.length === 0 && searchQuery ? (
+               <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
+                <Search className="w-12 h-12 text-gray-300" />
+                <p className="text-gray-500">No results found for "{searchQuery}"</p>
+               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {sortedSubscriptions.map((sub) => (
@@ -411,7 +476,7 @@ const App: React.FC = () => {
       >
         {/* Settings Header */}
         <div className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100 shrink-0">
-          <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3">
+          <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3 h-[72px]">
              <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100">
                <ArrowLeft className="w-6 h-6 text-gray-700" />
              </button>
@@ -477,7 +542,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg">{t.about}</h3>
-                  <p className="text-sm text-gray-500">SubRadar v1.3.3.3</p>
+                  <p className="text-sm text-gray-500">SubRadar v1.3.3.4</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 leading-relaxed">

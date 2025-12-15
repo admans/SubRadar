@@ -1,7 +1,11 @@
 export enum BillingCycle {
   Monthly = 'Monthly',
-  Yearly = 'Yearly'
+  Quarterly = 'Quarterly',
+  Yearly = 'Yearly',
+  Custom = 'Custom'
 }
+
+export type CycleUnit = 'day' | 'week' | 'month' | 'year';
 
 export type Language = 'en' | 'zh';
 
@@ -13,9 +17,19 @@ export interface Subscription {
   price: number;
   currency: Currency;
   cycle: BillingCycle;
+  
+  // Custom Cycle Fields
+  customCycleDuration?: number;
+  customCycleUnit?: CycleUnit;
+
   nextBillingDate: string; // ISO Date String YYYY-MM-DD
   startDate?: string; // Optional ISO Date String
   accountBalance?: number; // Optional balance
+  
+  // Notes & Media
+  notes?: string;
+  image?: string; // Base64 string
+
   createdAt: number;
 }
 
