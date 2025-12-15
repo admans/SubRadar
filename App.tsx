@@ -411,15 +411,15 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-surface dark:bg-slate-950 text-gray-900 dark:text-gray-100 font-sans selection:bg-primary-200 overflow-hidden relative transition-colors duration-300">
+    <div className="fixed inset-0 w-full h-full bg-surface dark:bg-slate-950 text-gray-900 dark:text-gray-100 font-sans selection:bg-primary-200 overflow-hidden select-none">
       
       {/* ================= MAIN LIST VIEW ================= */}
       <div 
-        className={`h-full transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 dark:bg-slate-900 rounded-3xl overflow-hidden cursor-pointer' : ''}`}
+        className={`absolute inset-0 flex flex-col transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 dark:bg-slate-900 rounded-3xl overflow-hidden cursor-pointer' : 'bg-surface dark:bg-slate-950'}`}
         style={{ transformOrigin: 'center top' }}
         onClick={() => isSettingsOpen && setIsSettingsOpen(false)}
       >
-        <header className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300 pt-[env(safe-area-inset-top)]">
+        <header className="shrink-0 z-20 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300 pt-[env(safe-area-inset-top)]">
           <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px]">
             
             {/* Conditional Header Content: Title vs Search Bar */}
@@ -473,8 +473,8 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <main className="max-w-5xl mx-auto px-4 pt-6 pb-24">
-          <div className="animate-in fade-in duration-300">
+        <main className="flex-1 overflow-y-auto w-full max-w-5xl mx-auto px-4 pt-6 pb-24 overscroll-contain">
+          <div className="animate-in fade-in duration-300 pb-[env(safe-area-inset-bottom)]">
             {subscriptions.length === 0 ? (
               <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
                 <div className="w-24 h-24 bg-surface-variant dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
@@ -509,7 +509,7 @@ const App: React.FC = () => {
       {/* Floating Action Button */}
       <button
         onClick={(e) => { e.stopPropagation(); setEditingSub(null); setIsFormOpen(true); }}
-        className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 dark:shadow-black/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
+        className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 dark:shadow-black/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20 mb-[env(safe-area-inset-bottom)]"
       >
         <Plus className="w-8 h-8" strokeWidth={2.5} />
       </button>
@@ -527,7 +527,7 @@ const App: React.FC = () => {
         }}
       >
         {/* Settings Header */}
-        <div className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 shrink-0 pt-[env(safe-area-inset-top)]">
+        <div className="shrink-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 pt-[env(safe-area-inset-top)]">
           <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3 h-[72px]">
              <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
                <ArrowLeft className="w-6 h-6 text-gray-700 dark:text-gray-300" />
@@ -538,7 +538,7 @@ const App: React.FC = () => {
 
         {/* Settings Content */}
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-xl mx-auto px-4 pt-6 space-y-6 pb-12">
+          <div className="max-w-xl mx-auto px-4 pt-6 space-y-6 pb-12 pb-[calc(3rem+env(safe-area-inset-bottom))]">
 
             {/* Appearance / Theme */}
              <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-gray-50 dark:border-slate-800 transition-colors">
@@ -628,7 +628,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg dark:text-gray-100">{t.about}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.4.2</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.4.3</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 dark:text-gray-500 leading-relaxed">
@@ -636,7 +636,6 @@ const App: React.FC = () => {
               </p>
             </div>
             
-            <div className="h-10"></div>
           </div>
         </div>
         
