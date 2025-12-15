@@ -131,7 +131,7 @@ const SubscriptionForm: React.FC<Props> = ({
     { value: 'year', label: t.year },
   ];
 
-  // Calculate transform origin based on the clicked element's rect
+  // Calculate transform origin based on the clicked element's rect center
   const transformOriginStyle = originRect 
     ? { transformOrigin: `${originRect.left + originRect.width / 2}px ${originRect.top + originRect.height / 2}px` }
     : { transformOrigin: 'bottom right' };
@@ -144,9 +144,9 @@ const SubscriptionForm: React.FC<Props> = ({
         onClick={onCancel}
       />
 
-      {/* Modal */}
+      {/* Modal - Silky "Card to Window" Transition */}
       <div 
-        className={`relative w-full h-full md:h-auto md:max-h-[85vh] md:max-w-lg md:rounded-3xl bg-white dark:bg-slate-900 shadow-2xl flex flex-col overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] md:pt-0 ${isVisible ? 'scale-100 opacity-100' : 'scale-0 opacity-0'}`}
+        className={`relative w-full h-full md:h-auto md:max-h-[85vh] md:max-w-lg md:rounded-3xl bg-white dark:bg-slate-900 shadow-2xl flex flex-col overflow-hidden transition-all duration-350 ease-[cubic-bezier(0.2,0,0,1)] md:pt-0 ${isVisible ? 'scale-100 opacity-100' : 'scale-75 opacity-0'}`}
         style={transformOriginStyle}
       >
         
