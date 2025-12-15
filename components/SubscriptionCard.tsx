@@ -5,7 +5,7 @@ import { Translation } from '../utils/translations';
 
 interface Props {
   subscription: Subscription;
-  onClick: (subscription: Subscription) => void;
+  onClick: (subscription: Subscription, e: React.MouseEvent) => void;
   onRenew: (subscription: Subscription) => void;
   t: Translation;
   language: Language;
@@ -94,7 +94,7 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
 
   return (
     <div 
-      onClick={() => onClick(subscription)}
+      onClick={(e) => onClick(subscription, e)}
       className={`relative group p-5 rounded-3xl border ${statusColor} transition-all duration-200 active:scale-[0.98] cursor-pointer shadow-sm hover:shadow-md h-full flex flex-col justify-between`}
     >
       <div className="flex justify-between items-start">
