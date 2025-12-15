@@ -1,19 +1,29 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { Subscription, AppSettings, Language, BillingCycle } from './types';
 import * as storage from './services/storageService';
 import SubscriptionForm from './components/SubscriptionForm';
 import SubscriptionCard from './components/SubscriptionCard';
 import { getTranslation } from './utils/translations';
 
-// Changed View type logic to boolean state for settings overlay
+// Helper to generate numeric ID from string UUID for LocalNotifications
+const hashCode = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+};
+
 const App: React.FC = () => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [settings, setSettings] = useState<AppSettings>({ notificationsEnabled: false, language: 'en' });
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false); // Replaced currentView with this
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  // Lifted state for delete confirmation to handle hardware back button correctly
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
 
@@ -23,12 +33,30 @@ const App: React.FC = () => {
   const touchStartX = useRef<number | null>(null);
   const settingsContentRef = useRef<HTMLDivElement>(null);
 
-  // Refs for back button listener
   const stateRef = useRef({ isSettingsOpen, isFormOpen, isDeleteConfirmOpen });
 
+  // 1. Initialize Data & Auto-Renew Logic
   useEffect(() => {
-    setSubscriptions(storage.getSubscriptions());
-    setSettings(storage.getSettings());
+    const loadedSubs = storage.getSubscriptions();
+    const loadedSettings = storage.getSettings();
+    setSettings(loadedSettings);
+
+    // Run Auto-Renew Check
+    const { updatedSubs, hasChanges } = checkAutoRenewals(loadedSubs);
+    
+    setSubscriptions(updatedSubs);
+    if (hasChanges) {
+      storage.saveSubscriptions(updatedSubs);
+      // If auto-renew changed dates, we might need to reschedule notifications
+      if (loadedSettings.notificationsEnabled) {
+        scheduleNotifications(updatedSubs);
+      }
+    } else {
+      // If no changes but notifications enabled, ensure they are scheduled (e.g. first run after update)
+      if (loadedSettings.notificationsEnabled) {
+        scheduleNotifications(updatedSubs);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -42,18 +70,14 @@ const App: React.FC = () => {
         const { isSettingsOpen, isFormOpen, isDeleteConfirmOpen } = stateRef.current;
 
         if (isDeleteConfirmOpen) {
-          // Priority 1: Close delete confirmation (return to edit form)
           setIsDeleteConfirmOpen(false);
         } else if (isFormOpen) {
-          // Priority 2: Close form
           setIsFormOpen(false);
           setEditingSub(null);
         } else if (isSettingsOpen) {
-          // Priority 3: Close settings
           setIsSettingsOpen(false);
-          setDragX(0); // Reset drag
+          setDragX(0);
         } else {
-          // Priority 4: Exit App
           CapacitorApp.exitApp();
         }
       });
@@ -62,38 +86,146 @@ const App: React.FC = () => {
     return () => { CapacitorApp.removeAllListeners(); };
   }, []);
 
-  // --- Gesture Logic ---
+  // --- Auto Renew Logic ---
+  const checkAutoRenewals = (subs: Subscription[]) => {
+    // Get local date string YYYY-MM-DD
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    const localTodayStr = (new Date(now.getTime() - offset)).toISOString().slice(0, 10);
 
+    let hasChanges = false;
+
+    const updatedSubs = subs.map(sub => {
+      // If balance insufficient or undefined, skip
+      if (sub.accountBalance === undefined || sub.accountBalance < sub.price) {
+        return sub;
+      }
+
+      // If not due yet, skip
+      if (sub.nextBillingDate > localTodayStr) {
+        return sub;
+      }
+
+      // Start Auto-Renew Loop
+      let currentSub = { ...sub };
+      // Safety limit to prevent infinite loops (e.g. max 5 years catch up)
+      for (let i = 0; i < 60; i++) {
+        // If we have advanced enough into the future, stop
+        if (currentSub.nextBillingDate > localTodayStr) break;
+        // If we ran out of money mid-loop, stop
+        if (currentSub.accountBalance < currentSub.price) break;
+
+        // 1. Deduct Balance
+        currentSub.accountBalance = Number((currentSub.accountBalance - currentSub.price).toFixed(2));
+        
+        // 2. Advance Date
+        const d = new Date(currentSub.nextBillingDate);
+        if (currentSub.cycle === BillingCycle.Monthly) {
+          d.setMonth(d.getMonth() + 1);
+        } else {
+          d.setFullYear(d.getFullYear() + 1);
+        }
+        currentSub.nextBillingDate = d.toISOString().split('T')[0];
+        
+        hasChanges = true;
+      }
+      return currentSub;
+    });
+
+    return { updatedSubs, hasChanges };
+  };
+
+  // --- Notification Logic ---
+  const scheduleNotifications = async (subs: Subscription[]) => {
+    try {
+      // 1. Cancel existing
+      await LocalNotifications.cancel({ notifications: subs.map(s => ({ id: hashCode(s.id) })) });
+      
+      // 2. Schedule new
+      const notifications = subs.map(sub => {
+        const date = new Date(sub.nextBillingDate);
+        // Set to 9:00 AM on due date
+        date.setHours(9, 0, 0, 0); 
+        
+        // If date is in past, don't schedule (or it will fire immediately/improperly)
+        if (date.getTime() < Date.now()) return null;
+
+        return {
+          id: hashCode(sub.id),
+          title: t.appName,
+          body: t.dueToday.replace('Today', sub.name) + `: ${sub.name}`, // "Due today: Netflix"
+          schedule: { at: date },
+          sound: undefined,
+          smallIcon: 'ic_stat_icon_config_sample', // Default capacitor icon usually
+          extra: { subId: sub.id }
+        };
+      }).filter(n => n !== null);
+
+      if (notifications.length > 0) {
+        // @ts-ignore
+        await LocalNotifications.schedule({ notifications });
+      }
+    } catch (e) {
+      console.error("Failed to schedule notifications", e);
+    }
+  };
+
+  const handleToggleNotification = async () => {
+    // Turning OFF
+    if (settings.notificationsEnabled) {
+      const newSettings = { ...settings, notificationsEnabled: false };
+      setSettings(newSettings);
+      storage.saveSettings(newSettings);
+      // Cancel all
+      LocalNotifications.cancel({ notifications: subscriptions.map(s => ({ id: hashCode(s.id) })) });
+      return;
+    }
+
+    // Turning ON - Request Permission
+    try {
+      const result = await LocalNotifications.requestPermissions();
+      if (result.display === 'granted') {
+        const newSettings = { ...settings, notificationsEnabled: true };
+        setSettings(newSettings);
+        storage.saveSettings(newSettings);
+        scheduleNotifications(subscriptions);
+      } else {
+        // Denied
+        const newSettings = { ...settings, notificationsEnabled: false };
+        setSettings(newSettings);
+        storage.saveSettings(newSettings);
+        // Optional: Alert user
+        alert('Permission denied. Please enable notifications in system settings.');
+      }
+    } catch (e) {
+      console.error("Error requesting notification permission", e);
+      // Fallback for web testing if plugin missing
+      const newSettings = { ...settings, notificationsEnabled: false };
+      setSettings(newSettings);
+    }
+  };
+
+  // --- Gesture Logic ---
   const onTouchStart = (e: React.TouchEvent) => {
-    // Only enable gesture if we are near the left edge (optional, currently enabled for whole screen)
     touchStartX.current = e.targetTouches[0].clientX;
     setIsDragging(true);
   };
 
   const onTouchMove = (e: React.TouchEvent) => {
     if (touchStartX.current === null) return;
-    
     const currentX = e.targetTouches[0].clientX;
     const delta = currentX - touchStartX.current;
-
-    // Only allow dragging to the right (positive delta)
-    if (delta > 0) {
-      setDragX(delta);
-    }
+    if (delta > 0) setDragX(delta);
   };
 
   const onTouchEnd = () => {
     setIsDragging(false);
     touchStartX.current = null;
-
-    const threshold = window.innerWidth * 0.3; // Close if dragged 30% of screen
-    
+    const threshold = window.innerWidth * 0.3;
     if (dragX > threshold) {
-      // Complete the slide out
       setIsSettingsOpen(false);
-      setDragX(0); // Reset for next time (transition will handle the exit visually)
+      setDragX(0);
     } else {
-      // Snap back
       setDragX(0);
     }
   };
@@ -131,8 +263,17 @@ const App: React.FC = () => {
     } else {
       newSubs = [...subscriptions, { id: crypto.randomUUID(), createdAt: Date.now(), ...subData }];
     }
-    setSubscriptions(newSubs);
-    storage.saveSubscriptions(newSubs);
+    
+    // Check auto-renew immediately for the new/edited sub in case user set a past date with balance
+    const { updatedSubs } = checkAutoRenewals(newSubs);
+    
+    setSubscriptions(updatedSubs);
+    storage.saveSubscriptions(updatedSubs);
+    
+    if (settings.notificationsEnabled) {
+      scheduleNotifications(updatedSubs);
+    }
+
     setIsFormOpen(false);
     setEditingSub(null);
     setIsDeleteConfirmOpen(false);
@@ -142,6 +283,12 @@ const App: React.FC = () => {
     const newSubs = subscriptions.filter(s => s.id !== id);
     setSubscriptions(newSubs);
     storage.saveSubscriptions(newSubs);
+    
+    // Remove notification for deleted sub
+    if (settings.notificationsEnabled) {
+      LocalNotifications.cancel({ notifications: [{ id: hashCode(id) }] });
+    }
+
     setIsFormOpen(false);
     setEditingSub(null);
     setIsDeleteConfirmOpen(false);
@@ -155,23 +302,21 @@ const App: React.FC = () => {
     } else {
       currentDate.setFullYear(currentDate.getFullYear() + 1);
     }
-
-    // Format back to YYYY-MM-DD
     const newDateStr = currentDate.toISOString().split('T')[0];
-    
-    const updatedSub = { ...sub, nextBillingDate: newDateStr };
+
+    let newBalance = sub.accountBalance;
+    if (typeof sub.accountBalance === 'number' && sub.accountBalance >= sub.price) {
+      newBalance = Number((sub.accountBalance - sub.price).toFixed(2));
+    }
+
+    const updatedSub = { ...sub, nextBillingDate: newDateStr, accountBalance: newBalance };
     const newSubs = subscriptions.map(s => s.id === sub.id ? updatedSub : s);
     
     setSubscriptions(newSubs);
     storage.saveSubscriptions(newSubs);
-  };
-
-  const handleToggleNotification = () => {
-    const newSettings = { ...settings, notificationsEnabled: !settings.notificationsEnabled };
-    setSettings(newSettings);
-    storage.saveSettings(newSettings);
-    if (newSettings.notificationsEnabled && 'Notification' in window && Notification.permission !== 'granted') {
-      Notification.requestPermission();
+    
+    if (settings.notificationsEnabled) {
+      scheduleNotifications(newSubs);
     }
   };
 
@@ -190,8 +335,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-surface text-gray-900 font-sans selection:bg-primary-200 overflow-hidden relative">
       
-      {/* ================= MAIN LIST VIEW (Always Rendered) ================= */}
-      {/* We apply a slight scale/dim effect when settings are open for a nice depth effect */}
+      {/* ================= MAIN LIST VIEW ================= */}
       <div 
         className={`h-full transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 rounded-3xl overflow-hidden cursor-pointer' : ''}`}
         style={{ transformOrigin: 'center top' }}
@@ -245,11 +389,7 @@ const App: React.FC = () => {
         </main>
       </div>
       
-      {/* 
-        Floating Action Button moved OUTSIDE the scaled main view 
-        This prevents it from jumping/scaling when settings are opened.
-        It sits at z-20, while settings overlay is z-30, so settings will cover it.
-      */}
+      {/* Floating Action Button */}
       <button
         onClick={(e) => { e.stopPropagation(); setEditingSub(null); setIsFormOpen(true); }}
         className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
@@ -269,7 +409,7 @@ const App: React.FC = () => {
           transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)',
         }}
       >
-        {/* Settings Header - Now part of the overlay so it moves with the slide */}
+        {/* Settings Header */}
         <div className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100 shrink-0">
           <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3">
              <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100">
@@ -337,7 +477,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg">{t.about}</h3>
-                  <p className="text-sm text-gray-500">SubRadar v1.3.3.1</p>
+                  <p className="text-sm text-gray-500">SubRadar v1.3.3.3</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 leading-relaxed">
@@ -349,7 +489,6 @@ const App: React.FC = () => {
           </div>
         </div>
         
-        {/* Left edge shadow hint during drag */}
         <div className="absolute left-0 top-0 bottom-0 w-4 bg-gradient-to-r from-black/5 to-transparent pointer-events-none" />
       </div>
 
