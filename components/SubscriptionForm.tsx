@@ -136,7 +136,7 @@ const SubscriptionForm: React.FC<Props> = ({
       />
 
       {/* Modal */}
-      <div className="relative w-full h-full md:h-auto md:max-h-[85vh] md:max-w-lg md:rounded-3xl bg-white dark:bg-slate-900 shadow-2xl flex flex-col animate-in slide-in-from-bottom-4 md:zoom-in-95 duration-300 overflow-hidden transition-colors pt-[env(safe-area-inset-top)] md:pt-0">
+      <div className="relative w-full h-full md:h-auto md:max-h-[85vh] md:max-w-lg md:rounded-3xl bg-white dark:bg-slate-900 shadow-2xl flex flex-col animate-in slide-in-from-bottom-4 md:zoom-in-95 duration-300 overflow-hidden transition-colors md:pt-0">
         
         {/* Full Screen Image Viewer Overlay */}
         {isImageViewerOpen && image && (
