@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Subscription, BillingCycle, Currency } from '../types';
-import { X, Check, Calendar, DollarSign, RefreshCw, Wallet, Clock } from 'lucide-react';
+import { X, Check, Calendar, DollarSign, RefreshCw, Wallet, Clock, Trash2, AlertCircle } from 'lucide-react';
 import { Translation } from '../utils/translations';
 
 interface Props {
@@ -21,6 +21,9 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
   // New optional fields
   const [startDate, setStartDate] = useState('');
   const [accountBalance, setAccountBalance] = useState('');
+
+  // Delete confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (initialData) {
@@ -64,6 +67,36 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
       {/* Modal Container */}
       <div className="relative w-full h-full md:h-auto md:max-h-[85vh] md:max-w-lg md:rounded-3xl bg-white shadow-2xl flex flex-col animate-in slide-in-from-bottom-4 md:zoom-in-95 duration-300 overflow-hidden">
         
+        {/* Delete Confirmation Overlay */}
+        {showDeleteConfirm && (
+          <div className="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-white rounded-3xl shadow-xl border border-gray-100 p-6 flex flex-col items-center text-center">
+              <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4 text-red-500">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">{t.delete}?</h3>
+              <p className="text-gray-500 mb-6 leading-relaxed">{t.confirmDelete}</p>
+              
+              <div className="grid grid-cols-2 gap-3 w-full">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="py-3 px-4 rounded-xl bg-gray-100 text-gray-700 font-bold hover:bg-gray-200 transition-colors"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  onClick={() => {
+                    if (initialData && onDelete) onDelete(initialData.id);
+                  }}
+                  className="py-3 px-4 rounded-xl bg-red-500 text-white font-bold shadow-lg shadow-red-200 hover:bg-red-600 transition-all"
+                >
+                  {t.confirm}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-100 shrink-0">
           <button 
@@ -89,7 +122,7 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Netflix"
+                placeholder={t.namePlaceholder}
                 className="w-full bg-transparent border-none outline-none text-xl text-gray-800 placeholder-gray-400"
                 autoFocus={!initialData}
                 required
@@ -225,11 +258,7 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
           
           {initialData && onDelete && (
             <button
-              onClick={() => {
-                if (window.confirm(t.confirmDelete)) {
-                  onDelete(initialData.id);
-                }
-              }}
+              onClick={() => setShowDeleteConfirm(true)}
               className="w-full py-3 text-red-500 font-medium rounded-full hover:bg-red-50 transition-colors"
             >
               {t.delete}
