@@ -60,8 +60,17 @@ jobs:
       - name: Generate Bilingual Changelog
         id: changelog
         run: |
-          # Try to find the previous tag. If none, we assume it's the first release.
-          PREV_TAG=$(git describe --tags --abbrev=0 ${{ env.VERSION_TAG }}^ 2>/dev/null || echo "")
+          # Logic to determine the range of commits for the changelog
+          # We want commits from the Previous Tag (exclusive) to Current HEAD (inclusive)
+          
+          # Check if HEAD is exactly a tag (e.g. triggered by tag push)
+          if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+             # If we are on a tag, we need to search backwards from its parent to find the previous tag
+             PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          else
+             # If we are NOT on a tag (e.g. workflow_dispatch on main), the closest reachable tag IS the previous release
+             PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
+          fi
           
           if [ -z "$PREV_TAG" ]; then
             echo "No previous tag found. Generating full log."
