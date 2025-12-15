@@ -628,7 +628,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg dark:text-gray-100">{t.about}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.4</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.4.1</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 dark:text-gray-500 leading-relaxed">
