@@ -7,98 +7,103 @@ import SubscriptionForm from './components/SubscriptionForm';
 import SubscriptionCard from './components/SubscriptionCard';
 import { getTranslation } from './utils/translations';
 
-type View = 'list' | 'settings';
-
+// Changed View type logic to boolean state for settings overlay
 const App: React.FC = () => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [settings, setSettings] = useState<AppSettings>({ notificationsEnabled: false, language: 'en' });
-  const [currentView, setCurrentView] = useState<View>('list');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false); // Replaced currentView with this
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
 
-  // Refs to access latest state inside the event listener closure
-  const stateRef = useRef({ currentView, isFormOpen });
+  // Gesture State
+  const [dragX, setDragX] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const touchStartX = useRef<number | null>(null);
+  const settingsContentRef = useRef<HTMLDivElement>(null);
 
-  // Load initial data
+  // Refs for back button listener
+  const stateRef = useRef({ isSettingsOpen, isFormOpen });
+
   useEffect(() => {
     setSubscriptions(storage.getSubscriptions());
     setSettings(storage.getSettings());
   }, []);
 
-  // Sync state to ref for back button listener
   useEffect(() => {
-    stateRef.current = { currentView, isFormOpen };
-  }, [currentView, isFormOpen]);
+    stateRef.current = { isSettingsOpen, isFormOpen };
+  }, [isSettingsOpen, isFormOpen]);
 
-  // Handle Hardware Back Button (Android)
+  // Hardware Back Button
   useEffect(() => {
     const handleBackButton = async () => {
       CapacitorApp.addListener('backButton', ({ canGoBack }) => {
-        const { currentView, isFormOpen } = stateRef.current;
+        const { isSettingsOpen, isFormOpen } = stateRef.current;
 
         if (isFormOpen) {
-          // If modal is open, close it
           setIsFormOpen(false);
           setEditingSub(null);
-        } else if (currentView === 'settings') {
-          // If in settings, go back to list
-          setCurrentView('list');
+        } else if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+          setDragX(0); // Reset drag
         } else {
-          // If on main screen, exit app
           CapacitorApp.exitApp();
         }
       });
     };
-
     handleBackButton();
-
-    return () => {
-      CapacitorApp.removeAllListeners();
-    };
+    return () => { CapacitorApp.removeAllListeners(); };
   }, []);
 
-  // Gesture handling for Swipe Back
-  const touchStartX = useRef<number | null>(null);
-  const minSwipeDistance = 50; // px
+  // --- Gesture Logic ---
 
   const onTouchStart = (e: React.TouchEvent) => {
+    // Only enable gesture if we are near the left edge (optional, currently enabled for whole screen)
     touchStartX.current = e.targetTouches[0].clientX;
+    setIsDragging(true);
   };
 
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStartX.current) return;
-    const touchEndX = e.changedTouches[0].clientX;
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
     
-    const distance = touchEndX - touchStartX.current;
-    
-    // If swipe right (distance > min)
-    if (distance > minSwipeDistance) {
-      setCurrentView('list');
+    const currentX = e.targetTouches[0].clientX;
+    const delta = currentX - touchStartX.current;
+
+    // Only allow dragging to the right (positive delta)
+    if (delta > 0) {
+      setDragX(delta);
     }
-    
+  };
+
+  const onTouchEnd = () => {
+    setIsDragging(false);
     touchStartX.current = null;
+
+    const threshold = window.innerWidth * 0.3; // Close if dragged 30% of screen
+    
+    if (dragX > threshold) {
+      // Complete the slide out
+      setIsSettingsOpen(false);
+      setDragX(0); // Reset for next time (transition will handle the exit visually)
+    } else {
+      // Snap back
+      setDragX(0);
+    }
   };
 
   const t = getTranslation(settings.language);
 
-  // Sort: Closest date first
   const sortedSubscriptions = useMemo(() => {
     return [...subscriptions].sort((a, b) => {
       return new Date(a.nextBillingDate).getTime() - new Date(b.nextBillingDate).getTime();
     });
   }, [subscriptions]);
 
-  // Calculate stats for header
   const monthlyCosts = useMemo(() => {
     return subscriptions.reduce((acc, sub) => {
       const amount = sub.cycle === 'Monthly' ? sub.price : sub.price / 12;
-      const currency = sub.currency || 'USD'; // Fallback
-      
-      if (currency === 'CNY') {
-        acc.CNY += amount;
-      } else {
-        acc.USD += amount;
-      }
+      const currency = sub.currency || 'USD';
+      if (currency === 'CNY') acc.CNY += amount;
+      else acc.USD += amount;
       return acc;
     }, { CNY: 0, USD: 0 });
   }, [subscriptions]);
@@ -107,29 +112,17 @@ const App: React.FC = () => {
     const parts = [];
     if (monthlyCosts.CNY > 0) parts.push(`¥${monthlyCosts.CNY.toFixed(0)}`);
     if (monthlyCosts.USD > 0) parts.push(`$${monthlyCosts.USD.toFixed(0)}`);
-    
     if (parts.length === 0) return `~ ${settings.language === 'zh' ? '¥0' : '$0'}`;
     return `~ ${parts.join(' + ')}`;
   }, [monthlyCosts, settings.language]);
 
   const handleSaveSubscription = (subData: Omit<Subscription, 'id' | 'createdAt'>) => {
     let newSubs: Subscription[];
-    
     if (editingSub) {
-      newSubs = subscriptions.map(s => 
-        s.id === editingSub.id 
-          ? { ...s, ...subData } 
-          : s
-      );
+      newSubs = subscriptions.map(s => s.id === editingSub.id ? { ...s, ...subData } : s);
     } else {
-      const newSub: Subscription = {
-        id: crypto.randomUUID(),
-        createdAt: Date.now(),
-        ...subData
-      };
-      newSubs = [...subscriptions, newSub];
+      newSubs = [...subscriptions, { id: crypto.randomUUID(), createdAt: Date.now(), ...subData }];
     }
-
     setSubscriptions(newSubs);
     storage.saveSubscriptions(newSubs);
     setIsFormOpen(false);
@@ -148,11 +141,8 @@ const App: React.FC = () => {
     const newSettings = { ...settings, notificationsEnabled: !settings.notificationsEnabled };
     setSettings(newSettings);
     storage.saveSettings(newSettings);
-
-    if (newSettings.notificationsEnabled) {
-      if ('Notification' in window && Notification.permission !== 'granted') {
-        Notification.requestPermission();
-      }
+    if (newSettings.notificationsEnabled && 'Notification' in window && Notification.permission !== 'granted') {
+      Notification.requestPermission();
     }
   };
 
@@ -162,31 +152,17 @@ const App: React.FC = () => {
     storage.saveSettings(newSettings);
   };
 
-  // Check for today's subscriptions to simulate notification
-  useEffect(() => {
-    if (!settings.notificationsEnabled) return;
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    const dueToday = subscriptions.filter(s => s.nextBillingDate === todayStr);
-
-    if (dueToday.length > 0) {
-      if ('Notification' in window && Notification.permission === 'granted') {
-         // Notification logic
-      }
-    }
-  }, [subscriptions, settings.notificationsEnabled]);
-
   return (
-    <div className="min-h-screen bg-surface pb-24 text-gray-900 font-sans selection:bg-primary-200">
+    <div className="min-h-screen bg-surface text-gray-900 font-sans selection:bg-primary-200 overflow-hidden relative">
       
-      {/* Top Bar */}
-      <header className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100 transition-all">
-        <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center">
-          {currentView === 'settings' ? (
-             <button onClick={() => setCurrentView('list')} className="p-2 -ml-2 rounded-full hover:bg-gray-100">
-               <ArrowLeft className="w-6 h-6 text-gray-700" />
-             </button>
-          ) : (
+      {/* ================= MAIN LIST VIEW (Always Rendered) ================= */}
+      {/* We apply a slight scale/dim effect when settings are open for a nice depth effect */}
+      <div 
+        className={`h-full transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 rounded-3xl overflow-hidden' : ''}`}
+        style={{ transformOrigin: 'center top' }}
+      >
+        <header className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100">
+          <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center">
             <div className="flex flex-col">
               <h1 className="text-2xl font-bold bg-gradient-to-br from-primary-700 to-primary-500 bg-clip-text text-transparent">
                 {t.appName}
@@ -195,30 +171,88 @@ const App: React.FC = () => {
                 {totalDisplay} {t.totalMonthly}
               </span>
             </div>
-          )}
-          
-          {currentView === 'list' && (
+            
             <button 
-              onClick={() => setCurrentView('settings')}
+              onClick={() => setIsSettingsOpen(true)}
               className="p-3 rounded-full hover:bg-surface-variant text-gray-600 active:scale-90 transition-transform"
             >
               <Settings className="w-6 h-6" />
             </button>
-          )}
-        </div>
-      </header>
+          </div>
+        </header>
 
-      {/* Main Content Area */}
-      <main className="max-w-5xl mx-auto px-4 pt-6 transition-all duration-300">
-        {currentView === 'settings' ? (
-          <div 
-            className="space-y-6 max-w-xl mx-auto animate-in slide-in-from-right-4 duration-300 min-h-[80vh]"
-            onTouchStart={onTouchStart}
-            onTouchEnd={onTouchEnd}
-          >
-            <h2 className="text-2xl font-bold px-1">{t.settings}</h2>
+        <main className="max-w-5xl mx-auto px-4 pt-6 pb-24">
+          <div className="animate-in fade-in duration-300">
+            {subscriptions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
+                <div className="w-24 h-24 bg-surface-variant rounded-full flex items-center justify-center mb-4">
+                  <CreditCard className="w-10 h-10 text-gray-400" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-700">{t.noSubsTitle}</h3>
+                <p className="text-gray-500 max-w-[200px]">{t.noSubsDesc}</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {sortedSubscriptions.map((sub) => (
+                  <SubscriptionCard 
+                    key={sub.id} 
+                    subscription={sub} 
+                    onClick={(s) => { setEditingSub(s); setIsFormOpen(true); }} 
+                    t={t}
+                    language={settings.language}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </main>
+
+        <button
+          onClick={() => { setEditingSub(null); setIsFormOpen(true); }}
+          className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
+        >
+          <Plus className="w-8 h-8" strokeWidth={2.5} />
+        </button>
+      </div>
+
+      {/* ================= SETTINGS OVERLAY ================= */}
+      {/* 
+         Logic:
+         1. Fixed position covering entire screen.
+         2. High Z-index.
+         3. Transform logic: 
+            - If open: translateX(0) + any active drag offset.
+            - If closed: translateX(100%).
+         4. Transition:
+            - If dragging: none (for 1:1 responsiveness).
+            - If releasing/opening: smooth cubic-bezier.
+      */}
+      <div 
+        className="fixed inset-0 z-30 bg-surface flex flex-col shadow-2xl"
+        ref={settingsContentRef}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{
+          transform: `translateX(${isSettingsOpen ? Math.max(0, dragX) : '100%'}px)`,
+          transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)',
+        }}
+      >
+        {/* Settings Header - Now part of the overlay so it moves with the slide */}
+        <div className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100 shrink-0">
+          <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3">
+             <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100">
+               <ArrowLeft className="w-6 h-6 text-gray-700" />
+             </button>
+             <h1 className="text-xl font-bold text-gray-800">{t.settings}</h1>
+          </div>
+        </div>
+
+        {/* Settings Content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-xl mx-auto px-4 pt-6 space-y-6 pb-12">
             
-            {/* Language Settings */}
+            {/* Language */}
             <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600">
@@ -245,7 +279,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Notification Settings */}
+            {/* Notifications */}
             <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="bg-primary-50 p-3 rounded-2xl text-primary-600">
@@ -264,6 +298,7 @@ const App: React.FC = () => {
               </button>
             </div>
 
+            {/* About */}
             <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50">
                <div className="flex items-center gap-4 mb-4">
                 <div className="bg-gray-50 p-3 rounded-2xl text-gray-600">
@@ -278,60 +313,21 @@ const App: React.FC = () => {
                 {t.aboutDesc}
               </p>
             </div>
+            
+            <div className="h-10"></div>
           </div>
-        ) : (
-          <div className="animate-in fade-in duration-300">
-            {subscriptions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
-                <div className="w-24 h-24 bg-surface-variant rounded-full flex items-center justify-center mb-4">
-                  <CreditCard className="w-10 h-10 text-gray-400" />
-                </div>
-                <h3 className="text-xl font-semibold text-gray-700">{t.noSubsTitle}</h3>
-                <p className="text-gray-500 max-w-[200px]">{t.noSubsDesc}</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {sortedSubscriptions.map((sub) => (
-                  <SubscriptionCard 
-                    key={sub.id} 
-                    subscription={sub} 
-                    onClick={(s) => {
-                      setEditingSub(s);
-                      setIsFormOpen(true);
-                    }} 
-                    t={t}
-                    language={settings.language}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </main>
+        </div>
+        
+        {/* Left edge shadow hint during drag */}
+        <div className="absolute left-0 top-0 bottom-0 w-4 bg-gradient-to-r from-black/5 to-transparent pointer-events-none" />
+      </div>
 
-      {/* FAB - Add Button */}
-      {currentView === 'list' && (
-        <button
-          onClick={() => {
-            setEditingSub(null);
-            setIsFormOpen(true);
-          }}
-          className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
-          aria-label="Add Subscription"
-        >
-          <Plus className="w-8 h-8" strokeWidth={2.5} />
-        </button>
-      )}
-
-      {/* Add/Edit Modal */}
+      {/* Subscription Form Modal */}
       {isFormOpen && (
         <SubscriptionForm 
           initialData={editingSub}
           onSave={handleSaveSubscription} 
-          onCancel={() => {
-            setIsFormOpen(false);
-            setEditingSub(null);
-          }}
+          onCancel={() => { setIsFormOpen(false); setEditingSub(null); }}
           onDelete={handleDeleteSubscription}
           t={t}
         />
