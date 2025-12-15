@@ -9,9 +9,20 @@ interface Props {
   onCancel: () => void;
   onDelete?: (id: string) => void;
   t: Translation;
+  // Lifted state props
+  showDeleteConfirm: boolean;
+  setShowDeleteConfirm: (show: boolean) => void;
 }
 
-const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDelete, t }) => {
+const SubscriptionForm: React.FC<Props> = ({ 
+  initialData, 
+  onSave, 
+  onCancel, 
+  onDelete, 
+  t, 
+  showDeleteConfirm, 
+  setShowDeleteConfirm 
+}) => {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [currency, setCurrency] = useState<Currency>('CNY');
@@ -21,9 +32,6 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
   // New optional fields
   const [startDate, setStartDate] = useState('');
   const [accountBalance, setAccountBalance] = useState('');
-
-  // Delete confirmation state
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (initialData) {
@@ -69,8 +77,18 @@ const SubscriptionForm: React.FC<Props> = ({ initialData, onSave, onCancel, onDe
         
         {/* Delete Confirmation Overlay */}
         {showDeleteConfirm && (
-          <div className="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
-            <div className="w-full max-w-sm bg-white rounded-3xl shadow-xl border border-gray-100 p-6 flex flex-col items-center text-center">
+          <div 
+            className="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200"
+            onClick={(e) => {
+              // Allow closing when clicking the backdrop
+              e.stopPropagation();
+              setShowDeleteConfirm(false);
+            }}
+          >
+            <div 
+              className="w-full max-w-sm bg-white rounded-3xl shadow-xl border border-gray-100 p-6 flex flex-col items-center text-center"
+              onClick={(e) => e.stopPropagation()} // Prevent closing when clicking the modal content
+            >
               <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4 text-red-500">
                 <Trash2 className="w-6 h-6" />
               </div>

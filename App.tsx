@@ -13,6 +13,8 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>({ notificationsEnabled: false, language: 'en' });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false); // Replaced currentView with this
   const [isFormOpen, setIsFormOpen] = useState(false);
+  // Lifted state for delete confirmation to handle hardware back button correctly
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
 
   // Gesture State
@@ -22,7 +24,7 @@ const App: React.FC = () => {
   const settingsContentRef = useRef<HTMLDivElement>(null);
 
   // Refs for back button listener
-  const stateRef = useRef({ isSettingsOpen, isFormOpen });
+  const stateRef = useRef({ isSettingsOpen, isFormOpen, isDeleteConfirmOpen });
 
   useEffect(() => {
     setSubscriptions(storage.getSubscriptions());
@@ -30,22 +32,28 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    stateRef.current = { isSettingsOpen, isFormOpen };
-  }, [isSettingsOpen, isFormOpen]);
+    stateRef.current = { isSettingsOpen, isFormOpen, isDeleteConfirmOpen };
+  }, [isSettingsOpen, isFormOpen, isDeleteConfirmOpen]);
 
   // Hardware Back Button
   useEffect(() => {
     const handleBackButton = async () => {
       CapacitorApp.addListener('backButton', ({ canGoBack }) => {
-        const { isSettingsOpen, isFormOpen } = stateRef.current;
+        const { isSettingsOpen, isFormOpen, isDeleteConfirmOpen } = stateRef.current;
 
-        if (isFormOpen) {
+        if (isDeleteConfirmOpen) {
+          // Priority 1: Close delete confirmation (return to edit form)
+          setIsDeleteConfirmOpen(false);
+        } else if (isFormOpen) {
+          // Priority 2: Close form
           setIsFormOpen(false);
           setEditingSub(null);
         } else if (isSettingsOpen) {
+          // Priority 3: Close settings
           setIsSettingsOpen(false);
           setDragX(0); // Reset drag
         } else {
+          // Priority 4: Exit App
           CapacitorApp.exitApp();
         }
       });
@@ -127,6 +135,7 @@ const App: React.FC = () => {
     storage.saveSubscriptions(newSubs);
     setIsFormOpen(false);
     setEditingSub(null);
+    setIsDeleteConfirmOpen(false);
   };
 
   const handleDeleteSubscription = (id: string) => {
@@ -135,6 +144,7 @@ const App: React.FC = () => {
     storage.saveSubscriptions(newSubs);
     setIsFormOpen(false);
     setEditingSub(null);
+    setIsDeleteConfirmOpen(false);
   };
 
   const handleRenewSubscription = (sub: Subscription) => {
@@ -169,6 +179,12 @@ const App: React.FC = () => {
     const newSettings = { ...settings, language: lang };
     setSettings(newSettings);
     storage.saveSettings(newSettings);
+  };
+
+  const closeForm = () => {
+    setIsFormOpen(false);
+    setEditingSub(null);
+    setIsDeleteConfirmOpen(false);
   };
 
   return (
@@ -227,27 +243,21 @@ const App: React.FC = () => {
             )}
           </div>
         </main>
-
-        <button
-          onClick={(e) => { e.stopPropagation(); setEditingSub(null); setIsFormOpen(true); }}
-          className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
-        >
-          <Plus className="w-8 h-8" strokeWidth={2.5} />
-        </button>
       </div>
+      
+      {/* 
+        Floating Action Button moved OUTSIDE the scaled main view 
+        This prevents it from jumping/scaling when settings are opened.
+        It sits at z-20, while settings overlay is z-30, so settings will cover it.
+      */}
+      <button
+        onClick={(e) => { e.stopPropagation(); setEditingSub(null); setIsFormOpen(true); }}
+        className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
+      >
+        <Plus className="w-8 h-8" strokeWidth={2.5} />
+      </button>
 
       {/* ================= SETTINGS OVERLAY ================= */}
-      {/* 
-         Logic:
-         1. Fixed position covering entire screen.
-         2. High Z-index.
-         3. Transform logic: 
-            - If open: translateX(0) + any active drag offset.
-            - If closed: translateX(100%).
-         4. Transition:
-            - If dragging: none (for 1:1 responsiveness).
-            - If releasing/opening: smooth cubic-bezier.
-      */}
       <div 
         className="fixed inset-0 z-30 bg-surface flex flex-col shadow-2xl"
         ref={settingsContentRef}
@@ -327,7 +337,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg">{t.about}</h3>
-                  <p className="text-sm text-gray-500">SubRadar v1.3.3</p>
+                  <p className="text-sm text-gray-500">SubRadar v1.3.3.1</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 leading-relaxed">
@@ -348,9 +358,11 @@ const App: React.FC = () => {
         <SubscriptionForm 
           initialData={editingSub}
           onSave={handleSaveSubscription} 
-          onCancel={() => { setIsFormOpen(false); setEditingSub(null); }}
+          onCancel={closeForm}
           onDelete={handleDeleteSubscription}
           t={t}
+          showDeleteConfirm={isDeleteConfirmOpen}
+          setShowDeleteConfirm={setIsDeleteConfirmOpen}
         />
       )}
     </div>
