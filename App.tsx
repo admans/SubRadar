@@ -234,7 +234,7 @@ const App: React.FC = () => {
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         style={{
-          transform: `translateX(${isSettingsOpen ? Math.max(0, dragX) : '100%'}px)`,
+          transform: isSettingsOpen ? `translateX(${Math.max(0, dragX)}px)` : 'translateX(100%)',
           transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)',
         }}
       >
