@@ -13,6 +13,7 @@ interface Props {
   showDeleteConfirm: boolean;
   setShowDeleteConfirm: (show: boolean) => void;
   originRect?: DOMRect | null;
+  isVisible: boolean; // Controlled by parent
 }
 
 const SubscriptionForm: React.FC<Props> = ({ 
@@ -23,7 +24,8 @@ const SubscriptionForm: React.FC<Props> = ({
   t, 
   showDeleteConfirm, 
   setShowDeleteConfirm,
-  originRect
+  originRect,
+  isVisible
 }) => {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
@@ -45,24 +47,6 @@ const SubscriptionForm: React.FC<Props> = ({
   const [image, setImage] = useState<string | undefined>(undefined);
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Animation State
-  const [isVisible, setIsVisible] = useState(false);
-  
-  useEffect(() => {
-    // Trigger animation frame after mount
-    requestAnimationFrame(() => {
-      setIsVisible(true);
-    });
-  }, []);
-
-  const handleClose = () => {
-    setIsVisible(false);
-    // Wait for transition to finish (300ms) before calling onCancel which unmounts component
-    setTimeout(() => {
-      onCancel();
-    }, 300);
-  };
 
   useEffect(() => {
     if (initialData) {
@@ -157,7 +141,7 @@ const SubscriptionForm: React.FC<Props> = ({
       {/* Backdrop */}
       <div 
         className={`absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0'}`}
-        onClick={handleClose}
+        onClick={onCancel}
       />
 
       {/* Modal */}
@@ -234,7 +218,7 @@ const SubscriptionForm: React.FC<Props> = ({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-slate-800 shrink-0">
           <button 
-            onClick={handleClose}
+            onClick={onCancel}
             className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-6 h-6 text-gray-600 dark:text-gray-300" />
