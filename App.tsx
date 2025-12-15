@@ -96,16 +96,19 @@ const App: React.FC = () => {
         root.classList.remove('dark');
       }
 
-      // 2. Apply Immersive Status Bar
+      // 2. Configure Status Bar (Native Mode - No Overlay)
       try {
-        // Overlay webview content under the status bar
-        await StatusBar.setOverlaysWebView({ overlay: true });
+        // Disable overlay: App starts BELOW the status bar
+        await StatusBar.setOverlaysWebView({ overlay: false });
         
-        // Set style based on theme (Dark theme = Light Text, Light theme = Dark Text)
         if (effectiveTheme === 'dark') {
-           await StatusBar.setStyle({ style: Style.Dark }); 
+           await StatusBar.setStyle({ style: Style.Dark });
+           // Set background color to match Slate-950 (#020617)
+           await StatusBar.setBackgroundColor({ color: '#020617' });
         } else {
            await StatusBar.setStyle({ style: Style.Light });
+           // Set background color to match Surface (#f8fafc)
+           await StatusBar.setBackgroundColor({ color: '#f8fafc' });
         }
       } catch (e) {
         // Ignore errors in browser environment
@@ -419,7 +422,7 @@ const App: React.FC = () => {
         style={{ transformOrigin: 'center top' }}
         onClick={() => isSettingsOpen && setIsSettingsOpen(false)}
       >
-        <header className="shrink-0 z-20 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300 pt-[env(safe-area-inset-top)]">
+        <header className="shrink-0 z-20 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300">
           <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px]">
             
             {/* Conditional Header Content: Title vs Search Bar */}
@@ -527,7 +530,7 @@ const App: React.FC = () => {
         }}
       >
         {/* Settings Header */}
-        <div className="shrink-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 pt-[env(safe-area-inset-top)]">
+        <div className="shrink-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800">
           <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3 h-[72px]">
              <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
                <ArrowLeft className="w-6 h-6 text-gray-700 dark:text-gray-300" />
@@ -628,7 +631,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg dark:text-gray-100">{t.about}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.4.3</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.4.4</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 dark:text-gray-500 leading-relaxed">
