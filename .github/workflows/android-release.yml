@@ -39,6 +39,13 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # Install Translate Shell for automatic translation
+      - name: Install Translate Shell
+        run: |
+          wget -qO trans git.io/trans
+          chmod +x ./trans
+          sudo mv trans /usr/local/bin/
+
       # 1. Determine Version
       - name: Set Version Variable
         id: vars
@@ -50,11 +57,10 @@ jobs:
           fi
 
       # 2. Generate Bilingual Changelog (Robust Version)
-      - name: Generate Changelog
+      - name: Generate Bilingual Changelog
         id: changelog
         run: |
           # Try to find the previous tag. If none, we assume it's the first release.
-          # We search for tags reachable from the current commit, excluding the current one if possible.
           PREV_TAG=$(git describe --tags --abbrev=0 ${{ env.VERSION_TAG }}^ 2>/dev/null || echo "")
           
           if [ -z "$PREV_TAG" ]; then
@@ -67,30 +73,49 @@ jobs:
           
           # Initialize content
           CONTENT=""
+
+          # Function to generate section with translation
+          generate_section() {
+            TITLE="$1"
+            GREP_PATTERN="$2"
+            
+            # Get logs matching the pattern
+            LOGS=$(git log $LOG_RANGE --pretty=format:"%s (%h)" --grep="$GREP_PATTERN" -i || true)
+            
+            if [ ! -z "$LOGS" ]; then
+              CONTENT="$CONTENT\n\n### $TITLE"
+              
+              # Process line by line
+              while IFS= read -r line; do
+                if [ ! -z "$line" ]; then
+                  # Extract text without hash for better translation
+                  CLEAN_MSG=$(echo "$line" | sed -E 's/ \([a-f0-9]+\)$//')
+                  
+                  # Translate: -b (brief), -s (source en), -t (target zh-CN), -e (engine google)
+                  # 2>/dev/null to suppress warnings
+                  TRANS=$(trans -b -e google -s en -t zh-CN "$CLEAN_MSG" 2>/dev/null | head -n1)
+                  
+                  CONTENT="$CONTENT\n- $line"
+                  if [ ! -z "$TRANS" ] && [ "$TRANS" != "$CLEAN_MSG" ]; then
+                     CONTENT="$CONTENT\n  <small>$TRANS</small>"
+                  fi
+                fi
+              done <<< "$LOGS"
+            fi
+          }
           
-          # 1. Features (feat, add, new, implement, feature) - Case Insensitive
-          # -i: ignore case, -E: extended regex
-          FEATS=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --grep="^\(feat\|add\|new\|implement\|feature\)" -i || true)
-          if [ ! -z "$FEATS" ]; then
-            CONTENT="$CONTENT\n\n### 🚀 New Features | 新功能\n$FEATS"
-          fi
+          # 1. Features
+          generate_section "🚀 New Features | 新功能" "^\(feat\|add\|new\|implement\|feature\)"
           
-          # 2. Fixes (fix, bug, issue, resolve, repair) - Case Insensitive
-          FIXES=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --grep="^\(fix\|bug\|issue\|resolve\|repair\)" -i || true)
-          if [ ! -z "$FIXES" ]; then
-            CONTENT="$CONTENT\n\n### 🐛 Bug Fixes | 问题修复\n$FIXES"
-          fi
+          # 2. Fixes
+          generate_section "🐛 Bug Fixes | 问题修复" "^\(fix\|bug\|issue\|resolve\|repair\)"
           
-          # 3. Improvements & Others (update, refactor, style, chore, perf, docs)
-          # Captures 'update', 'refactor', 'chore', etc OR anything that wasn't caught above if you want to be safe,
-          # but here we target specific improvement keywords to keep it clean.
-          IMPROVES=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --grep="^\(update\|refactor\|style\|chore\|perf\|docs\|optimize\)" -i || true)
-          if [ ! -z "$IMPROVES" ]; then
-            CONTENT="$CONTENT\n\n### 🛠 Improvements | 改进优化\n$IMPROVES"
-          fi
+          # 3. Improvements
+          generate_section "🛠 Improvements | 改进优化" "^\(update\|refactor\|style\|chore\|perf\|docs\|optimize\)"
           
-          # 4. Catch-all for commits that didn't match the above categories (Optional)
-          # Invert matching all the keywords above
+          # 4. Others (Catch-all, inverted grep)
+          # Note: We skip translation for 'Others' to save time/api calls on minor things, 
+          # or you can enable it by copying the logic above. Here we just list them.
           OTHERS=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --invert-grep --grep="^\(feat\|add\|new\|implement\|feature\|fix\|bug\|issue\|resolve\|repair\|update\|refactor\|style\|chore\|perf\|docs\|optimize\|Release\|Merge\)" -i || true)
           if [ ! -z "$OTHERS" ]; then
             CONTENT="$CONTENT\n\n### 📋 Other Changes | 其他更改\n$OTHERS"
