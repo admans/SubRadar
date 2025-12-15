@@ -419,7 +419,7 @@ const App: React.FC = () => {
         style={{ transformOrigin: 'center top' }}
         onClick={() => isSettingsOpen && setIsSettingsOpen(false)}
       >
-        <header className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300">
+        <header className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300 pt-[env(safe-area-inset-top)]">
           <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px]">
             
             {/* Conditional Header Content: Title vs Search Bar */}
@@ -527,7 +527,7 @@ const App: React.FC = () => {
         }}
       >
         {/* Settings Header */}
-        <div className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 shrink-0">
+        <div className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 shrink-0 pt-[env(safe-area-inset-top)]">
           <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3 h-[72px]">
              <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
                <ArrowLeft className="w-6 h-6 text-gray-700 dark:text-gray-300" />
