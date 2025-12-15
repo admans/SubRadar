@@ -1,0 +1,20 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - bot
+  categories:
+    - title: '🚀 New Features | 新功能'
+      labels:
+        - 'feature'
+        - 'feat'
+    - title: '🐛 Bug Fixes | 问题修复'
+      labels:
+        - 'fix'
+        - 'bug'
+    - title: '🛠 Improvements | 改进优化'
+      labels:
+        - 'enhancement'
+        - 'refactor'
+        - 'chore'
