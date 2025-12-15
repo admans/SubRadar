@@ -46,16 +46,22 @@ export const getSettings = (): AppSettings => {
       if (!parsed.language) {
         parsed.language = detectLanguage();
       }
+      // Ensure theme property exists
+      if (!parsed.theme) {
+        parsed.theme = 'auto';
+      }
       return parsed;
     }
     return { 
       notificationsEnabled: false,
-      language: detectLanguage()
+      language: detectLanguage(),
+      theme: 'auto'
     };
   } catch (e) {
     return { 
       notificationsEnabled: false,
-      language: detectLanguage()
+      language: detectLanguage(),
+      theme: 'auto'
     };
   }
 };

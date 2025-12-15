@@ -9,6 +9,8 @@ export type CycleUnit = 'day' | 'week' | 'month' | 'year';
 
 export type Language = 'en' | 'zh';
 
+export type Theme = 'light' | 'dark' | 'auto';
+
 export type Currency = 'CNY' | 'USD';
 
 export interface Subscription {
@@ -36,4 +38,5 @@ export interface Subscription {
 export interface AppSettings {
   notificationsEnabled: boolean;
   language: Language;
+  theme: Theme;
 }

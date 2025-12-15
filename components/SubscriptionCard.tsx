@@ -28,18 +28,18 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
   
   const daysDiff = Math.ceil((nextDateCompare.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
-  let statusColor = "bg-surface-variant border-transparent";
-  let textColor = "text-gray-900";
-  let dateColor = "text-gray-600";
+  let statusColor = "bg-surface-variant dark:bg-slate-900 border-transparent";
+  let textColor = "text-gray-900 dark:text-gray-100";
+  let dateColor = "text-gray-600 dark:text-gray-400";
 
   if (isToday) {
-    statusColor = "bg-amber-100 border-amber-200";
-    textColor = "text-amber-900";
-    dateColor = "text-amber-700 font-semibold";
+    statusColor = "bg-amber-100 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800/50";
+    textColor = "text-amber-900 dark:text-amber-100";
+    dateColor = "text-amber-700 dark:text-amber-300 font-semibold";
   } else if (isPast) {
-    statusColor = "bg-red-50 border-red-100";
-    textColor = "text-red-900";
-    dateColor = "text-red-600 font-semibold";
+    statusColor = "bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900/40";
+    textColor = "text-red-900 dark:text-red-100";
+    dateColor = "text-red-600 dark:text-red-300 font-semibold";
   }
 
   const locale = language === 'zh' ? 'zh-CN' : 'en-US';
@@ -106,22 +106,22 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
             <span className={`text-xl font-bold ${textColor}`}>
               {currencySymbol}{subscription.price.toFixed(2)}
             </span>
-            <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">
               {getCycleDisplay()}
             </span>
           </div>
 
           {/* Account Balance Display */}
           {subscription.accountBalance !== undefined && subscription.accountBalance !== null && (
-            <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+            <div className="text-xs text-gray-500 dark:text-gray-400 font-medium flex items-center gap-1 mt-0.5">
               <span>{t.balanceLabel}:</span>
-              <span className="text-gray-700">{currencySymbol}{subscription.accountBalance.toFixed(2)}</span>
+              <span className="text-gray-700 dark:text-gray-300">{currencySymbol}{subscription.accountBalance.toFixed(2)}</span>
             </div>
           )}
 
           {/* Image Attachment Indicator */}
           {subscription.image && (
-             <div className="mt-1 flex items-center text-primary-600 text-[10px] font-medium bg-primary-50 self-start px-1.5 py-0.5 rounded-md">
+             <div className="mt-1 flex items-center text-primary-600 dark:text-primary-300 text-[10px] font-medium bg-primary-50 dark:bg-primary-900/30 self-start px-1.5 py-0.5 rounded-md">
                <ImageIcon className="w-3 h-3 mr-1" />
                <span className="opacity-90">{t.image}</span> 
              </div>
@@ -137,13 +137,13 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
           )}
 
           <div className="flex items-center gap-1.5">
-            {!isToday && !isPast && <Calendar className="w-3.5 h-3.5 text-gray-400" />}
+            {!isToday && !isPast && <Calendar className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />}
             <span className={`text-base ${dateColor}`}>
               {dateStr}
             </span>
           </div>
           
-          <span className={`text-xs font-medium mt-1 ${isToday ? 'text-amber-600' : isPast ? 'text-red-500' : 'text-gray-400'}`}>
+          <span className={`text-xs font-medium mt-1 ${isToday ? 'text-amber-600 dark:text-amber-400' : isPast ? 'text-red-500 dark:text-red-400' : 'text-gray-400 dark:text-gray-500'}`}>
             {getStatusText()}
           </span>
         </div>
@@ -151,13 +151,13 @@ const SubscriptionCard: React.FC<Props> = ({ subscription, onClick, onRenew, t, 
 
       {/* Renew Action Button (Only visible if Today or Past) */}
       {showRenewAction && (
-        <div className="mt-4 pt-3 border-t border-black/5 flex justify-end">
+        <div className="mt-4 pt-3 border-t border-black/5 dark:border-white/10 flex justify-end">
           <button
             onClick={handleRenewClick}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-all shadow-sm
               ${isRenewing 
-                ? 'bg-green-100 text-green-700 scale-95' 
-                : 'bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100'
+                ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 scale-95' 
+                : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700 active:bg-gray-100 dark:active:bg-slate-700/80'
               }`}
           >
             {isRenewing ? (

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages, Search, X } from 'lucide-react';
+import { Plus, Settings, CreditCard, Bell, Info, ArrowLeft, Languages, Search, X, Moon, Sun, Monitor } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { Subscription, AppSettings, Language, BillingCycle } from './types';
+import { Subscription, AppSettings, Language, BillingCycle, Theme } from './types';
 import * as storage from './services/storageService';
 import SubscriptionForm from './components/SubscriptionForm';
 import SubscriptionCard from './components/SubscriptionCard';
@@ -39,7 +39,7 @@ const addCycleToDate = (date: Date, cycle: BillingCycle, customDuration?: number
 
 const App: React.FC = () => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [settings, setSettings] = useState<AppSettings>({ notificationsEnabled: false, language: 'en' });
+  const [settings, setSettings] = useState<AppSettings>({ notificationsEnabled: false, language: 'en', theme: 'auto' });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -78,6 +78,34 @@ const App: React.FC = () => {
       }
     }
   }, []);
+
+  // Theme Logic
+  useEffect(() => {
+    const root = window.document.documentElement;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    const applyTheme = () => {
+      const systemTheme = mediaQuery.matches ? 'dark' : 'light';
+      const effectiveTheme = settings.theme === 'auto' ? systemTheme : settings.theme;
+
+      if (effectiveTheme === 'dark') {
+        root.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+      }
+    };
+
+    applyTheme();
+
+    const listener = () => {
+      if (settings.theme === 'auto') {
+        applyTheme();
+      }
+    };
+
+    mediaQuery.addEventListener('change', listener);
+    return () => mediaQuery.removeEventListener('change', listener);
+  }, [settings.theme]);
 
   useEffect(() => {
     stateRef.current = { isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen };
@@ -346,6 +374,12 @@ const App: React.FC = () => {
     storage.saveSettings(newSettings);
   };
 
+  const handleThemeChange = (theme: Theme) => {
+    const newSettings = { ...settings, theme };
+    setSettings(newSettings);
+    storage.saveSettings(newSettings);
+  };
+
   const closeForm = () => {
     setIsFormOpen(false);
     setEditingSub(null);
@@ -359,25 +393,25 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-surface text-gray-900 font-sans selection:bg-primary-200 overflow-hidden relative">
+    <div className="min-h-screen bg-surface dark:bg-slate-950 text-gray-900 dark:text-gray-100 font-sans selection:bg-primary-200 overflow-hidden relative transition-colors duration-300">
       
       {/* ================= MAIN LIST VIEW ================= */}
       <div 
-        className={`h-full transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 rounded-3xl overflow-hidden cursor-pointer' : ''}`}
+        className={`h-full transition-all duration-300 ${isSettingsOpen ? 'scale-[0.92] opacity-50 bg-gray-100 dark:bg-slate-900 rounded-3xl overflow-hidden cursor-pointer' : ''}`}
         style={{ transformOrigin: 'center top' }}
         onClick={() => isSettingsOpen && setIsSettingsOpen(false)}
       >
-        <header className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100">
+        <header className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 transition-colors duration-300">
           <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px]">
             
             {/* Conditional Header Content: Title vs Search Bar */}
             {!isSearchOpen ? (
               <>
                 <div className="flex flex-col animate-in fade-in duration-200">
-                  <h1 className="text-2xl font-bold bg-gradient-to-br from-primary-700 to-primary-500 bg-clip-text text-transparent">
+                  <h1 className="text-2xl font-bold bg-gradient-to-br from-primary-700 to-primary-500 dark:from-primary-400 dark:to-primary-600 bg-clip-text text-transparent">
                     {t.appName}
                   </h1>
-                  <span className="text-xs text-gray-500 font-medium">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
                     {totalDisplay} {t.totalMonthly}
                   </span>
                 </div>
@@ -385,13 +419,13 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-2">
                    <button 
                     onClick={(e) => { e.stopPropagation(); setIsSearchOpen(true); }}
-                    className="p-3 rounded-full hover:bg-surface-variant text-gray-600 active:scale-90 transition-transform"
+                    className="p-3 rounded-full hover:bg-surface-variant dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300 active:scale-90 transition-transform"
                   >
                     <Search className="w-6 h-6" />
                   </button>
                   <button 
                     onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); }}
-                    className="p-3 rounded-full hover:bg-surface-variant text-gray-600 active:scale-90 transition-transform"
+                    className="p-3 rounded-full hover:bg-surface-variant dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300 active:scale-90 transition-transform"
                   >
                     <Settings className="w-6 h-6" />
                   </button>
@@ -406,13 +440,13 @@ const App: React.FC = () => {
                     placeholder={t.searchPlaceholder}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-gray-100 rounded-xl py-2.5 pl-10 pr-4 text-base focus:outline-none focus:ring-2 focus:ring-primary-400"
+                    className="w-full bg-gray-100 dark:bg-slate-800 rounded-xl py-2.5 pl-10 pr-4 text-base focus:outline-none focus:ring-2 focus:ring-primary-400 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
                   />
-                  <Search className="w-5 h-5 text-gray-400 absolute left-3 top-2.5" />
+                  <Search className="w-5 h-5 text-gray-400 dark:text-gray-500 absolute left-3 top-2.5" />
                 </div>
                 <button 
                   onClick={closeSearch}
-                  className="p-2 rounded-full hover:bg-surface-variant text-gray-600"
+                  className="p-2 rounded-full hover:bg-surface-variant dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300"
                 >
                    <X className="w-6 h-6" />
                 </button>
@@ -425,16 +459,16 @@ const App: React.FC = () => {
           <div className="animate-in fade-in duration-300">
             {subscriptions.length === 0 ? (
               <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
-                <div className="w-24 h-24 bg-surface-variant rounded-full flex items-center justify-center mb-4">
-                  <CreditCard className="w-10 h-10 text-gray-400" />
+                <div className="w-24 h-24 bg-surface-variant dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                  <CreditCard className="w-10 h-10 text-gray-400 dark:text-gray-500" />
                 </div>
-                <h3 className="text-xl font-semibold text-gray-700">{t.noSubsTitle}</h3>
-                <p className="text-gray-500 max-w-[200px]">{t.noSubsDesc}</p>
+                <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">{t.noSubsTitle}</h3>
+                <p className="text-gray-500 dark:text-gray-400 max-w-[200px]">{t.noSubsDesc}</p>
               </div>
             ) : sortedSubscriptions.length === 0 && searchQuery ? (
                <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
-                <Search className="w-12 h-12 text-gray-300" />
-                <p className="text-gray-500">No results found for "{searchQuery}"</p>
+                <Search className="w-12 h-12 text-gray-300 dark:text-gray-600" />
+                <p className="text-gray-500 dark:text-gray-400">No results found for "{searchQuery}"</p>
                </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -457,14 +491,14 @@ const App: React.FC = () => {
       {/* Floating Action Button */}
       <button
         onClick={(e) => { e.stopPropagation(); setEditingSub(null); setIsFormOpen(true); }}
-        className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
+        className="fixed bottom-8 right-6 w-16 h-16 bg-primary-600 text-white rounded-[20px] shadow-xl shadow-primary-200/50 dark:shadow-black/50 flex items-center justify-center hover:bg-primary-700 active:scale-95 transition-all z-20"
       >
         <Plus className="w-8 h-8" strokeWidth={2.5} />
       </button>
 
       {/* ================= SETTINGS OVERLAY ================= */}
       <div 
-        className="fixed inset-0 z-30 bg-surface flex flex-col shadow-2xl"
+        className="fixed inset-0 z-30 bg-surface dark:bg-slate-950 flex flex-col shadow-2xl transition-colors duration-300"
         ref={settingsContentRef}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -475,40 +509,74 @@ const App: React.FC = () => {
         }}
       >
         {/* Settings Header */}
-        <div className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-gray-100 shrink-0">
+        <div className="sticky top-0 z-10 bg-surface/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 shrink-0">
           <div className="max-w-5xl mx-auto px-5 py-4 flex items-center gap-3 h-[72px]">
-             <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100">
-               <ArrowLeft className="w-6 h-6 text-gray-700" />
+             <button onClick={() => setIsSettingsOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
+               <ArrowLeft className="w-6 h-6 text-gray-700 dark:text-gray-300" />
              </button>
-             <h1 className="text-xl font-bold text-gray-800">{t.settings}</h1>
+             <h1 className="text-xl font-bold text-gray-800 dark:text-white">{t.settings}</h1>
           </div>
         </div>
 
         {/* Settings Content */}
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-xl mx-auto px-4 pt-6 space-y-6 pb-12">
+
+            {/* Appearance / Theme */}
+             <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-gray-50 dark:border-slate-800 transition-colors">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="bg-purple-50 dark:bg-purple-900/30 p-3 rounded-2xl text-purple-600 dark:text-purple-400">
+                  {settings.theme === 'light' ? <Sun className="w-6 h-6" /> : settings.theme === 'dark' ? <Moon className="w-6 h-6" /> : <Monitor className="w-6 h-6" />}
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg dark:text-gray-100">{t.appearance}</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{t.appearanceDesc}</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-3 gap-2 bg-gray-100 dark:bg-slate-800 p-1.5 rounded-2xl">
+                <button 
+                  onClick={() => handleThemeChange('light')}
+                  className={`py-2 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${settings.theme === 'light' ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                >
+                   <Sun className="w-4 h-4" /> {t.themeLight}
+                </button>
+                <button 
+                  onClick={() => handleThemeChange('dark')}
+                   className={`py-2 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${settings.theme === 'dark' ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                >
+                   <Moon className="w-4 h-4" /> {t.themeDark}
+                </button>
+                 <button 
+                  onClick={() => handleThemeChange('auto')}
+                   className={`py-2 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${settings.theme === 'auto' ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                >
+                   <Monitor className="w-4 h-4" /> {t.themeAuto}
+                </button>
+              </div>
+            </div>
             
             {/* Language */}
-            <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50 flex items-center justify-between">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-gray-50 dark:border-slate-800 flex items-center justify-between transition-colors">
               <div className="flex items-center gap-4">
-                <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600">
+                <div className="bg-indigo-50 dark:bg-indigo-900/30 p-3 rounded-2xl text-indigo-600 dark:text-indigo-400">
                   <Languages className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-lg">{t.language}</h3>
-                  <p className="text-sm text-gray-500">{t.languageDesc}</p>
+                  <h3 className="font-semibold text-lg dark:text-gray-100">{t.language}</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{t.languageDesc}</p>
                 </div>
               </div>
-              <div className="flex bg-gray-100 rounded-xl p-1">
+              <div className="flex bg-gray-100 dark:bg-slate-800 rounded-xl p-1">
                 <button 
                   onClick={() => handleLanguageChange('en')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${settings.language === 'en' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${settings.language === 'en' ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
                 >
                   EN
                 </button>
                 <button 
                   onClick={() => handleLanguageChange('zh')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${settings.language === 'zh' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${settings.language === 'zh' ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
                 >
                   中文
                 </button>
@@ -516,36 +584,36 @@ const App: React.FC = () => {
             </div>
 
             {/* Notifications */}
-            <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50 flex items-center justify-between">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-gray-50 dark:border-slate-800 flex items-center justify-between transition-colors">
               <div className="flex items-center gap-4">
-                <div className="bg-primary-50 p-3 rounded-2xl text-primary-600">
+                <div className="bg-primary-50 dark:bg-primary-900/30 p-3 rounded-2xl text-primary-600 dark:text-primary-400">
                   <Bell className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-lg">{t.notifications}</h3>
-                  <p className="text-sm text-gray-500">{t.notificationsDesc}</p>
+                  <h3 className="font-semibold text-lg dark:text-gray-100">{t.notifications}</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{t.notificationsDesc}</p>
                 </div>
               </div>
               <button 
                 onClick={handleToggleNotification}
-                className={`w-14 h-8 rounded-full transition-colors relative ${settings.notificationsEnabled ? 'bg-primary-600' : 'bg-gray-200'}`}
+                className={`w-14 h-8 rounded-full transition-colors relative ${settings.notificationsEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-slate-700'}`}
               >
                 <div className={`absolute top-1 w-6 h-6 rounded-full bg-white shadow-sm transition-transform ${settings.notificationsEnabled ? 'left-7' : 'left-1'}`} />
               </button>
             </div>
 
             {/* About */}
-            <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-gray-50 dark:border-slate-800 transition-colors">
                <div className="flex items-center gap-4 mb-4">
-                <div className="bg-gray-50 p-3 rounded-2xl text-gray-600">
+                <div className="bg-gray-50 dark:bg-slate-800 p-3 rounded-2xl text-gray-600 dark:text-gray-400">
                   <Info className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-lg">{t.about}</h3>
-                  <p className="text-sm text-gray-500">SubRadar v1.3.3.4</p>
+                  <h3 className="font-semibold text-lg dark:text-gray-100">{t.about}</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.3.4</p>
                 </div>
               </div>
-              <p className="text-sm text-gray-400 leading-relaxed">
+              <p className="text-sm text-gray-400 dark:text-gray-500 leading-relaxed">
                 {t.aboutDesc}
               </p>
             </div>
