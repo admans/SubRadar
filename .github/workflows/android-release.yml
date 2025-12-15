@@ -18,7 +18,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # Removed cache: 'npm' because package-lock.json is missing
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -27,7 +27,7 @@ jobs:
           java-version: '17'
 
       - name: Install Dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build Web App
         run: npm run build
