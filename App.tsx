@@ -9,6 +9,9 @@ import SubscriptionForm from './components/SubscriptionForm';
 import SubscriptionCard from './components/SubscriptionCard';
 import { getTranslation } from './utils/translations';
 
+// Standard Animation Duration
+const ANIMATION_DURATION = 300;
+
 // Helper to generate numeric ID from string UUID for LocalNotifications
 const hashCode = (str: string) => {
   let hash = 0;
@@ -42,16 +45,17 @@ const App: React.FC = () => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [settings, setSettings] = useState<AppSettings>({ notificationsEnabled: false, language: 'en', theme: 'auto' });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  
+  // Form State
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isFormAnimating, setIsFormAnimating] = useState(false); // Controls transition class
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
-  
-  // Animation State
   const [formOriginRect, setFormOriginRect] = useState<DOMRect | null>(null);
 
   // Search State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [isSearchAnimating, setIsSearchAnimating] = useState(false); // Controls the CSS animation state
+  const [isSearchAnimating, setIsSearchAnimating] = useState(false); // Controls transition class
   const [searchOriginRect, setSearchOriginRect] = useState<DOMRect | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -62,7 +66,13 @@ const App: React.FC = () => {
   const settingsContentRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const stateRef = useRef({ isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen });
+  // State Ref for Event Listeners (Back Button)
+  const stateRef = useRef({ 
+    isSettingsOpen, 
+    isFormOpen, 
+    isDeleteConfirmOpen, 
+    isSearchOpen 
+  });
 
   // 1. Initialize Data & Auto-Renew Logic
   useEffect(() => {
@@ -130,6 +140,7 @@ const App: React.FC = () => {
     return () => mediaQuery.removeEventListener('change', listener);
   }, [settings.theme]);
 
+  // Keep Ref updated for Back Button Listener
   useEffect(() => {
     stateRef.current = { isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen };
   }, [isSettingsOpen, isFormOpen, isDeleteConfirmOpen, isSearchOpen]);
@@ -143,16 +154,22 @@ const App: React.FC = () => {
         if (isDeleteConfirmOpen) {
           setIsDeleteConfirmOpen(false);
         } else if (isFormOpen) {
-          // Trigger close animation is handled inside SubscriptionForm usually, 
-          // but for hardware back, we might just close it abruptly or need a ref to trigger animation.
-          // For MVP, simple close is acceptable, or we can improve this later.
-          setIsFormOpen(false);
-          setEditingSub(null);
+          // Trigger Form Exit Animation manually for Back Button
+          setIsFormAnimating(false);
+          setTimeout(() => {
+            setIsFormOpen(false);
+            setEditingSub(null);
+          }, ANIMATION_DURATION);
         } else if (isSettingsOpen) {
           setIsSettingsOpen(false);
           setDragX(0);
         } else if (isSearchOpen) {
-          handleCloseSearch();
+          // Trigger Search Exit Animation manually for Back Button
+          setIsSearchAnimating(false);
+          setTimeout(() => {
+            setIsSearchOpen(false);
+            setSearchQuery('');
+          }, ANIMATION_DURATION);
         } else {
           CapacitorApp.exitApp();
         }
@@ -171,27 +188,15 @@ const App: React.FC = () => {
     let hasChanges = false;
 
     const updatedSubs = subs.map(sub => {
-      // If balance insufficient or undefined, skip
-      if (sub.accountBalance === undefined || sub.accountBalance < sub.price) {
-        return sub;
-      }
+      if (sub.accountBalance === undefined || sub.accountBalance < sub.price) return sub;
+      if (sub.nextBillingDate > localTodayStr) return sub;
 
-      // If not due yet, skip
-      if (sub.nextBillingDate > localTodayStr) {
-        return sub;
-      }
-
-      // Start Auto-Renew Loop
       let currentSub = { ...sub };
-      // Safety limit
       for (let i = 0; i < 60; i++) {
         if (currentSub.nextBillingDate > localTodayStr) break;
         if (currentSub.accountBalance < currentSub.price) break;
 
-        // 1. Deduct Balance
         currentSub.accountBalance = Number((currentSub.accountBalance - currentSub.price).toFixed(2));
-        
-        // 2. Advance Date (using shared helper)
         const d = new Date(currentSub.nextBillingDate);
         const newDate = addCycleToDate(d, currentSub.cycle, currentSub.customCycleDuration, currentSub.customCycleUnit);
         currentSub.nextBillingDate = newDate.toISOString().split('T')[0];
@@ -212,9 +217,7 @@ const App: React.FC = () => {
       const notifications = subs.map(sub => {
         const date = new Date(sub.nextBillingDate);
         date.setHours(9, 0, 0, 0); 
-        
         if (date.getTime() < Date.now()) return null;
-
         return {
           id: hashCode(sub.id),
           title: t.appName,
@@ -297,7 +300,6 @@ const App: React.FC = () => {
       const lowerQuery = searchQuery.toLowerCase();
       filtered = subscriptions.filter(s => s.name.toLowerCase().includes(lowerQuery));
     }
-
     return [...filtered].sort((a, b) => {
       return new Date(a.nextBillingDate).getTime() - new Date(b.nextBillingDate).getTime();
     });
@@ -310,17 +312,15 @@ const App: React.FC = () => {
       else if (sub.cycle === BillingCycle.Quarterly) monthlyPrice = sub.price / 3;
       else if (sub.cycle === BillingCycle.Yearly) monthlyPrice = sub.price / 12;
       else if (sub.cycle === BillingCycle.Custom && sub.customCycleDuration && sub.customCycleUnit) {
-        // Approximate calculation for custom cycles
-        let days = 30; // default divisor
+        let days = 30; 
         if (sub.customCycleUnit === 'day') days = sub.customCycleDuration;
         if (sub.customCycleUnit === 'week') days = sub.customCycleDuration * 7;
         if (sub.customCycleUnit === 'month') days = sub.customCycleDuration * 30;
         if (sub.customCycleUnit === 'year') days = sub.customCycleDuration * 365;
         monthlyPrice = (sub.price / days) * 30;
       } else {
-        monthlyPrice = sub.price; // Fallback
+        monthlyPrice = sub.price;
       }
-
       const currency = sub.currency || 'USD';
       if (currency === 'CNY') acc.CNY += monthlyPrice;
       else acc.USD += monthlyPrice;
@@ -336,6 +336,8 @@ const App: React.FC = () => {
     return `~ ${parts.join(' + ')}`;
   }, [monthlyCosts, settings.language]);
 
+  // --- Shared Logic for Form & Search ---
+
   const handleSaveSubscription = (subData: Omit<Subscription, 'id' | 'createdAt'>) => {
     let newSubs: Subscription[];
     if (editingSub) {
@@ -345,31 +347,20 @@ const App: React.FC = () => {
     }
     
     const { updatedSubs } = checkAutoRenewals(newSubs);
-    
     setSubscriptions(updatedSubs);
     storage.saveSubscriptions(updatedSubs);
-    
-    if (settings.notificationsEnabled) {
-      scheduleNotifications(updatedSubs);
-    }
+    if (settings.notificationsEnabled) scheduleNotifications(updatedSubs);
 
-    setIsFormOpen(false);
-    setEditingSub(null);
-    setIsDeleteConfirmOpen(false);
+    handleCloseForm(); // Use animated close
   };
 
   const handleDeleteSubscription = (id: string) => {
     const newSubs = subscriptions.filter(s => s.id !== id);
     setSubscriptions(newSubs);
     storage.saveSubscriptions(newSubs);
-    
-    if (settings.notificationsEnabled) {
-      LocalNotifications.cancel({ notifications: [{ id: hashCode(id) }] });
-    }
+    if (settings.notificationsEnabled) LocalNotifications.cancel({ notifications: [{ id: hashCode(id) }] });
 
-    setIsFormOpen(false);
-    setEditingSub(null);
-    setIsDeleteConfirmOpen(false);
+    handleCloseForm(); // Use animated close
   };
 
   const handleRenewSubscription = (sub: Subscription) => {
@@ -387,10 +378,7 @@ const App: React.FC = () => {
     
     setSubscriptions(newSubs);
     storage.saveSubscriptions(newSubs);
-    
-    if (settings.notificationsEnabled) {
-      scheduleNotifications(newSubs);
-    }
+    if (settings.notificationsEnabled) scheduleNotifications(newSubs);
   };
 
   const handleLanguageChange = (lang: Language) => {
@@ -405,14 +393,13 @@ const App: React.FC = () => {
     storage.saveSettings(newSettings);
   };
 
-  // --- Animation & Interaction Handlers ---
+  // --- Animation Controllers ---
 
   const handleOpenSearch = (e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     setSearchOriginRect(rect);
     setIsSearchOpen(true);
-    // Slight delay to allow DOM to render before animating in
     requestAnimationFrame(() => {
        setIsSearchAnimating(true);
     });
@@ -420,34 +407,42 @@ const App: React.FC = () => {
 
   const handleCloseSearch = () => {
     setIsSearchAnimating(false);
-    // Wait for animation to finish before removing from DOM
     setTimeout(() => {
       setIsSearchOpen(false);
       setSearchQuery('');
-    }, 300); // Match CSS transition duration
+    }, ANIMATION_DURATION);
+  };
+
+  const handleOpenForm = (rect: DOMRect, sub: Subscription | null) => {
+    setFormOriginRect(rect);
+    setEditingSub(sub);
+    setIsFormOpen(true);
+    // Double RAF ensures browser has painted "open" state (opacity 0) before applying "animating" (opacity 1)
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            setIsFormAnimating(true);
+        });
+    });
+  };
+
+  const handleCloseForm = () => {
+    setIsFormAnimating(false);
+    setIsDeleteConfirmOpen(false);
+    setTimeout(() => {
+        setIsFormOpen(false);
+        setEditingSub(null);
+    }, ANIMATION_DURATION);
   };
 
   const handleFabClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    setFormOriginRect(rect);
-    setEditingSub(null);
-    setIsFormOpen(true);
+    handleOpenForm(rect, null);
   };
 
   const handleCardClick = (sub: Subscription, e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    setFormOriginRect(rect);
-    setEditingSub(sub);
-    setIsFormOpen(true);
-  };
-
-  const closeForm = () => {
-    // We pass this function to the form, which will handle the exit animation
-    // and then call the actual state update.
-    setIsFormOpen(false);
-    setEditingSub(null);
-    setIsDeleteConfirmOpen(false);
+    handleOpenForm(rect, sub);
   };
 
   return (
@@ -463,7 +458,7 @@ const App: React.FC = () => {
           <div className="max-w-5xl mx-auto px-5 py-4 flex justify-between items-center h-[72px] relative overflow-hidden">
             
             {/* Standard Header Content */}
-            <div className={`flex justify-between items-center w-full transition-opacity duration-200 ${isSearchOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <div className={`flex justify-between items-center w-full transition-opacity duration-300 ${isSearchOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
                 <div className="flex flex-col">
                   <h1 className="text-2xl font-bold bg-gradient-to-br from-primary-700 to-primary-500 dark:from-primary-400 dark:to-primary-600 bg-clip-text text-transparent">
                     {t.appName}
@@ -524,8 +519,8 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto w-full max-w-5xl mx-auto px-4 pt-6 pb-24 overscroll-contain">
-          <div className="animate-in fade-in duration-300 pb-[env(safe-area-inset-bottom)]">
+        <main className="flex-1 overflow-y-auto w-full max-w-5xl mx-auto px-4 pt-6 pb-24 overscroll-y-contain">
+          <div className="animate-in fade-in duration-300 pb-[env(safe-area-inset-bottom)] min-h-[100.5%]">
             {subscriptions.length === 0 ? (
               <div className="flex flex-col items-center justify-center mt-20 text-center space-y-4 opacity-60">
                 <div className="w-24 h-24 bg-surface-variant dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
@@ -545,7 +540,7 @@ const App: React.FC = () => {
                   <SubscriptionCard 
                     key={sub.id} 
                     subscription={sub} 
-                    onClick={(s, e) => handleCardClick(s, e)} 
+                    onClick={handleCardClick} 
                     onRenew={handleRenewSubscription}
                     t={t}
                     language={settings.language}
@@ -574,7 +569,7 @@ const App: React.FC = () => {
         onTouchEnd={onTouchEnd}
         style={{
           transform: isSettingsOpen ? `translateX(${Math.max(0, dragX)}px)` : 'translateX(100%)',
-          transition: isDragging ? 'none' : 'transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)',
+          transition: isDragging ? 'none' : 'transform 300ms cubic-bezier(0.32, 0.72, 0, 1)',
         }}
       >
         {/* Settings Header */}
@@ -588,7 +583,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Settings Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto overscroll-y-contain">
           <div className="max-w-xl mx-auto px-4 pt-6 space-y-6 pb-12 pb-[calc(3rem+env(safe-area-inset-bottom))]">
 
             {/* Appearance / Theme */}
@@ -679,7 +674,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg dark:text-gray-100">{t.about}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.5</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">SubRadar v1.3.5.1</p>
                 </div>
               </div>
               <p className="text-sm text-gray-400 dark:text-gray-500 leading-relaxed">
@@ -698,12 +693,13 @@ const App: React.FC = () => {
         <SubscriptionForm 
           initialData={editingSub}
           onSave={handleSaveSubscription} 
-          onCancel={closeForm}
+          onCancel={handleCloseForm} // Use animated close handler
           onDelete={handleDeleteSubscription}
           t={t}
           showDeleteConfirm={isDeleteConfirmOpen}
           setShowDeleteConfirm={setIsDeleteConfirmOpen}
           originRect={formOriginRect}
+          isVisible={isFormAnimating} // Controlled by parent
         />
       )}
     </div>
