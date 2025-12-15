@@ -42,6 +42,8 @@
         /* padding-top removed to allow immersive headers */
         padding-bottom: env(safe-area-inset-bottom);
         transition: background-color 0.3s ease;
+        /* Prevent the whole page from bouncing, allowing inner divs to bounce independently */
+        overscroll-behavior-y: none;
       }
       
       .dark body {
