@@ -9,13 +9,21 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version Tag (e.g. v1.3.2)'
+        description: 'Version tag, for example v2.0.0.1'
         required: true
-        default: 'v2.0.0.0'
+        default: 'v2.0.0.1'
       notes:
-        description: 'Custom Notes (Optional)'
+        description: 'Detailed release notes. Include user-facing highlights, fixes, UI changes, and known notes.'
         required: false
-        default: ''
+        default: |
+          Highlights:
+          - 
+
+          Fixes and polish:
+          - 
+
+          Notes:
+          - 
 
 jobs:
   build-android:
@@ -167,16 +175,31 @@ jobs:
           name: SubRadar ${{ env.VERSION_TAG }}
           files: app/build/outputs/apk/debug/SubRadar-${{ env.VERSION_TAG }}.apk
           body: |
-            ## Android APK Update
-            
+            ## SubRadar Android Update | 安卓版本更新
+
             Version: **${{ env.VERSION_TAG }}**
-            
+            Build type: **Debug APK**
+
+            ### Release Summary | 更新概要
+
+            This release includes user-facing improvements, fixes, and polishing work collected since the previous version. The APK attached below can be installed directly on supported Android devices.
+
+            本版本包含自上一版本以来的功能改进、问题修复和体验打磨。下方附带的 APK 可直接安装到支持的 Android 设备上。
+
+            ### Manual Notes | 手动更新说明
+
             ${{ github.event.inputs.notes }}
-            
+
+            ### Detailed Changes | 详细变更
+
             ${{ env.CHANGELOG_BODY }}
-            
+
             ---
-            
-            Download **SubRadar-${{ env.VERSION_TAG }}.apk** below.
+
+            ### Download | 下载
+
+            Download **SubRadar-${{ env.VERSION_TAG }}.apk** from the assets below.
+
+            请在下方 Assets 区域下载 **SubRadar-${{ env.VERSION_TAG }}.apk**。
           draft: false
           prerelease: false
