@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag, for example v2.0.0.1'
+        description: 'Version tag, for example v2.0.0.2'
         required: true
-        default: 'v2.0.0.1'
+        default: 'v2.0.0.2'
       notes:
         description: 'Detailed release notes. Include user-facing highlights, fixes, UI changes, and known notes.'
         required: false
