@@ -40,7 +40,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Release
 
-The GitHub Actions workflow builds the native Android project directly. Push a tag like `v2.0.0.3` or run the workflow manually.
+The GitHub Actions workflow builds the native Android project directly. Push a tag like `v2.0.0.4` or run the workflow manually.
 
 ## Tech
 
