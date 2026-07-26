@@ -102,7 +102,7 @@ import androidx.core.content.ContextCompat
 import coil.compose.rememberAsyncImagePainter
 import org.json.JSONArray
 import org.json.JSONObject
-import top.yukonga.miuix.kmp.basic.MiuixTheme
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
