@@ -863,7 +863,6 @@ fun StatsView(items: List<Subscription>, settings: AppSettings, palette: Palette
         }
         items(byCategory) { entry ->
             StatCard(entry.key, formatMoney(entry.value, settings.primaryCurrency), palette)
-                        }
         }
     }
 }
