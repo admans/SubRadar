@@ -124,6 +124,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.roundToLong
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
@@ -154,10 +155,17 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val title = intent.getStringExtra("title") ?: "SubRadar"
         val body = intent.getStringExtra("body") ?: "Subscription due today"
+        val openIntent = PendingIntent.getActivity(
+            context,
+            title.hashCode(),
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(body)
+            .setContentIntent(openIntent)
             .setAutoCancel(true)
             .build()
 
@@ -175,6 +183,29 @@ enum class AppLanguage { En, Zh }
 enum class AppThemeMode { Light, Dark, Auto }
 enum class Currency { CNY, USD }
 enum class DisplayMode { List, Calendar, Stats }
+enum class SmartFilter { All, Attention, Due, LowBalance, Active, Archived }
+enum class SpendingMode { Fixed, Balance, Metered, Hybrid }
+enum class LedgerType { Renewal, Expense, TopUp, Refund, Adjustment, PriceChange }
+enum class SubscriptionState { Active, Paused, Archived }
+
+data class LedgerEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val type: LedgerType,
+    val amount: Double,
+    val date: String,
+    val note: String? = null,
+    val balanceAfter: Double? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class SubscriptionTemplate(
+    val name: String,
+    val category: String,
+    val price: Double,
+    val currency: Currency,
+    val cycle: BillingCycle,
+    val spendingMode: SpendingMode
+)
 
 data class Subscription(
     val id: String = UUID.randomUUID().toString(),
@@ -187,6 +218,9 @@ data class Subscription(
     val nextBillingDate: String,
     val startDate: String? = null,
     val accountBalance: Double? = null,
+    val spendingMode: SpendingMode = SpendingMode.Fixed,
+    val state: SubscriptionState = SubscriptionState.Active,
+    val ledger: List<LedgerEntry> = emptyList(),
     val category: String = "Other",
     val notes: String? = null,
     val imageUri: String? = null,
@@ -199,7 +233,11 @@ data class AppSettings(
     val theme: AppThemeMode = AppThemeMode.Auto,
     val reminderDaysBefore: Int = 0,
     val primaryCurrency: Currency = Currency.CNY,
-    val usdToCnyRate: Double = 7.2
+    val usdToCnyRate: Double = 7.2,
+    val defaultCurrency: Currency = Currency.CNY,
+    val defaultCycle: BillingCycle = BillingCycle.Monthly,
+    val defaultCategory: String = "Other",
+    val defaultSpendingMode: SpendingMode = SpendingMode.Fixed
 )
 
 data class Copy(
@@ -288,7 +326,11 @@ class SubRadarStore(private val context: Context) {
                 theme = json.optString("theme", AppThemeMode.Auto.name).toEnum(AppThemeMode.Auto),
                 reminderDaysBefore = json.optInt("reminderDaysBefore", 0).coerceIn(0, 30),
                 primaryCurrency = json.optString("primaryCurrency", Currency.CNY.name).toEnum(Currency.CNY),
-                usdToCnyRate = json.optDouble("usdToCnyRate", 7.2).takeIf { it > 0.0 } ?: 7.2
+                usdToCnyRate = json.optDouble("usdToCnyRate", 7.2).takeIf { it > 0.0 } ?: 7.2,
+                defaultCurrency = json.optString("defaultCurrency", Currency.CNY.name).toEnum(Currency.CNY),
+                defaultCycle = json.optString("defaultCycle", BillingCycle.Monthly.name).toEnum(BillingCycle.Monthly),
+                defaultCategory = json.optString("defaultCategory", "Other").ifBlank { "Other" },
+                defaultSpendingMode = json.optString("defaultSpendingMode", SpendingMode.Fixed.name).toEnum(SpendingMode.Fixed)
             )
         }.getOrDefault(AppSettings(language = detectLanguage()))
     }
@@ -301,6 +343,10 @@ class SubRadarStore(private val context: Context) {
             .put("reminderDaysBefore", settings.reminderDaysBefore)
             .put("primaryCurrency", settings.primaryCurrency.name)
             .put("usdToCnyRate", settings.usdToCnyRate)
+            .put("defaultCurrency", settings.defaultCurrency.name)
+            .put("defaultCycle", settings.defaultCycle.name)
+            .put("defaultCategory", settings.defaultCategory)
+            .put("defaultSpendingMode", settings.defaultSpendingMode.name)
         prefs.edit().putString(SETTINGS_KEY, json.toString()).apply()
     }
 
@@ -325,6 +371,11 @@ private fun JSONObject.toSubscription(): Subscription {
         nextBillingDate = optString("nextBillingDate", LocalDate.now().toString()),
         startDate = optString("startDate", "").ifBlank { null },
         accountBalance = if (has("accountBalance")) optDouble("accountBalance") else null,
+        spendingMode = optString("spendingMode", SpendingMode.Fixed.name).toEnum(SpendingMode.Fixed),
+        state = optString("state", SubscriptionState.Active.name).toEnum(SubscriptionState.Active),
+        ledger = optJSONArray("ledger")?.let { array ->
+            List(array.length()) { index -> array.getJSONObject(index).toLedgerEntry() }
+        }.orEmpty(),
         category = optString("category", "Other").ifBlank { "Other" },
         notes = optString("notes", "").ifBlank { null },
         imageUri = optString("imageUri", "").ifBlank { optString("image", "").ifBlank { null } },
@@ -345,9 +396,38 @@ private fun Subscription.toJson(): JSONObject {
     customCycleUnit?.let { json.put("customCycleUnit", it.name) }
     startDate?.let { json.put("startDate", it) }
     accountBalance?.let { json.put("accountBalance", it) }
+    json.put("spendingMode", spendingMode.name)
+    json.put("state", state.name)
+    val ledgerArray = JSONArray()
+    ledger.forEach { ledgerArray.put(it.toJson()) }
+    json.put("ledger", ledgerArray)
     json.put("category", category)
     notes?.let { json.put("notes", it) }
     imageUri?.let { json.put("imageUri", it) }
+    return json
+}
+
+private fun JSONObject.toLedgerEntry(): LedgerEntry {
+    return LedgerEntry(
+        id = optString("id", UUID.randomUUID().toString()),
+        type = optString("type", LedgerType.Adjustment.name).toEnum(LedgerType.Adjustment),
+        amount = optDouble("amount", 0.0),
+        date = optString("date", LocalDate.now().toString()),
+        note = optString("note", "").ifBlank { null },
+        balanceAfter = if (has("balanceAfter")) optDouble("balanceAfter") else null,
+        createdAt = optLong("createdAt", System.currentTimeMillis())
+    )
+}
+
+private fun LedgerEntry.toJson(): JSONObject {
+    val json = JSONObject()
+        .put("id", id)
+        .put("type", type.name)
+        .put("amount", amount)
+        .put("date", date)
+        .put("createdAt", createdAt)
+    note?.let { json.put("note", it) }
+    balanceAfter?.let { json.put("balanceAfter", it) }
     return json
 }
 
@@ -367,31 +447,182 @@ private fun addCycle(date: LocalDate, cycle: BillingCycle, duration: Int?, unit:
 }
 
 private fun autoRenew(items: List<Subscription>): List<Subscription> {
-    val today = LocalDate.now()
     return items.map { sub ->
-        var current = sub
-        var guard = 0
-        while (guard < 60) {
-            val balance = current.accountBalance ?: break
-            if (balance < current.price) break
-            val next = parseDate(current.nextBillingDate) ?: break
-            if (next.isAfter(today)) break
-            current = current.copy(
-                accountBalance = ((balance - current.price) * 100).toLong() / 100.0,
-                nextBillingDate = addCycle(next, current.cycle, current.customCycleDuration, current.customCycleUnit).toString()
-            )
-            guard += 1
+        val next = parseDate(sub.nextBillingDate)
+        if (
+            sub.state == SubscriptionState.Active &&
+            next != null &&
+            ChronoUnit.DAYS.between(next, LocalDate.now()) >= 14
+        ) {
+            setSubscriptionState(sub, SubscriptionState.Paused)
+        } else {
+            sub
         }
-        current
     }
 }
 
 private fun parseDate(value: String): LocalDate? = runCatching { LocalDate.parse(value) }.getOrNull()
 
+private fun roundMoney(value: Double): Double = (value * 100.0).roundToLong() / 100.0
+
+private fun isDueOrOverdue(sub: Subscription): Boolean {
+    if (sub.state != SubscriptionState.Active) return false
+    val next = parseDate(sub.nextBillingDate) ?: return true
+    return !next.isAfter(LocalDate.now())
+}
+
+private fun isStalePending(sub: Subscription): Boolean {
+    if (sub.state != SubscriptionState.Active) return false
+    val next = parseDate(sub.nextBillingDate) ?: return false
+    return ChronoUnit.DAYS.between(next, LocalDate.now()) >= 7
+}
+
+private fun isLowBalance(sub: Subscription): Boolean {
+    if (sub.state != SubscriptionState.Active) return false
+    val balance = sub.accountBalance ?: return false
+    return balance < sub.price
+}
+
+private fun needsAttention(sub: Subscription): Boolean {
+    if (sub.state != SubscriptionState.Active) return false
+    return isDueOrOverdue(sub) || isLowBalance(sub) || isStalePending(sub) || hasSuspiciousDate(sub)
+}
+
+private fun hasSuspiciousDate(sub: Subscription): Boolean {
+    val next = parseDate(sub.nextBillingDate) ?: return true
+    val days = ChronoUnit.DAYS.between(LocalDate.now(), next)
+    return days > 730
+}
+
+private fun matchesSmartFilter(sub: Subscription, filter: SmartFilter): Boolean {
+    return when (filter) {
+        SmartFilter.All -> sub.state != SubscriptionState.Archived
+        SmartFilter.Attention -> needsAttention(sub)
+        SmartFilter.Due -> isDueOrOverdue(sub)
+        SmartFilter.LowBalance -> isLowBalance(sub)
+        SmartFilter.Active -> sub.state == SubscriptionState.Active
+        SmartFilter.Archived -> sub.state == SubscriptionState.Archived
+    }
+}
+
+private fun issueLabels(sub: Subscription, language: AppLanguage): List<String> {
+    val labels = mutableListOf<String>()
+    if (isDueOrOverdue(sub)) labels += if (language == AppLanguage.Zh) "待确认续费" else "Renewal pending"
+    if (isLowBalance(sub)) labels += if (language == AppLanguage.Zh) "余额不足" else "Low balance"
+    if (isStalePending(sub)) labels += if (language == AppLanguage.Zh) "逾期超过 7 天" else "Overdue 7+ days"
+    if (hasSuspiciousDate(sub)) labels += if (language == AppLanguage.Zh) "日期异常" else "Date looks unusual"
+    return labels
+}
+
+private fun duplicateIds(items: List<Subscription>): Set<String> {
+    return items
+        .filter { it.state != SubscriptionState.Archived }
+        .groupBy { it.name.trim().lowercase() }
+        .filterKeys { it.isNotBlank() }
+        .filterValues { it.size > 1 }
+        .values
+        .flatten()
+        .map { it.id }
+        .toSet()
+}
+
+private fun applyRenewal(sub: Subscription, paidDate: LocalDate, amount: Double, note: String?): Subscription {
+    val previousBalance = sub.accountBalance
+    val newBalance = previousBalance?.let { balance -> roundMoney(balance - amount) }
+    val entry = LedgerEntry(
+        type = LedgerType.Renewal,
+        amount = amount,
+        date = paidDate.toString(),
+        note = note?.ifBlank { null },
+        balanceAfter = newBalance
+    )
+    return sub.copy(
+        state = SubscriptionState.Active,
+        nextBillingDate = addCycle(paidDate, sub.cycle, sub.customCycleDuration, sub.customCycleUnit).toString(),
+        accountBalance = newBalance,
+        ledger = listOf(entry) + sub.ledger
+    )
+}
+
+private fun applyLedger(sub: Subscription, type: LedgerType, amount: Double, date: LocalDate, note: String?): Subscription {
+    val currentBalance = sub.accountBalance ?: 0.0
+    val nextBalance = when (type) {
+        LedgerType.Expense -> currentBalance - amount
+        LedgerType.TopUp -> currentBalance + amount
+        LedgerType.Refund -> currentBalance + amount
+        LedgerType.Adjustment -> amount
+        LedgerType.Renewal -> currentBalance - amount
+        LedgerType.PriceChange -> currentBalance
+    }.let(::roundMoney)
+    val entry = LedgerEntry(
+        type = type,
+        amount = amount,
+        date = date.toString(),
+        note = note?.ifBlank { null },
+        balanceAfter = nextBalance
+    )
+    val mode = if (sub.spendingMode == SpendingMode.Fixed) SpendingMode.Balance else sub.spendingMode
+    return sub.copy(
+        accountBalance = nextBalance,
+        spendingMode = mode,
+        ledger = listOf(entry) + sub.ledger
+    )
+}
+
+private fun setSubscriptionState(sub: Subscription, state: SubscriptionState, date: LocalDate = LocalDate.now()): Subscription {
+    val entry = LedgerEntry(
+        type = LedgerType.Adjustment,
+        amount = 0.0,
+        date = date.toString(),
+        note = "State: ${state.name}",
+        balanceAfter = sub.accountBalance
+    )
+    return sub.copy(state = state, ledger = listOf(entry) + sub.ledger)
+}
+
+private fun withPriceChange(previous: Subscription, updated: Subscription): Subscription {
+    if (roundMoney(previous.price) == roundMoney(updated.price) || previous.currency != updated.currency) return updated
+    val entry = LedgerEntry(
+        type = LedgerType.PriceChange,
+        amount = updated.price,
+        date = LocalDate.now().toString(),
+        note = "${currencySymbol(previous.currency)}${"%.2f".format(previous.price)} -> ${currencySymbol(updated.currency)}${"%.2f".format(updated.price)}",
+        balanceAfter = updated.accountBalance
+    )
+    return updated.copy(ledger = listOf(entry) + updated.ledger)
+}
+
+private fun latestPriceChange(sub: Subscription): LedgerEntry? {
+    return sub.ledger.firstOrNull { it.type == LedgerType.PriceChange }
+}
+
+private fun subscriptionTemplates(isZh: Boolean): List<SubscriptionTemplate> {
+    return if (isZh) {
+        listOf(
+            SubscriptionTemplate("ChatGPT", "AI", 20.0, Currency.USD, BillingCycle.Monthly, SpendingMode.Fixed),
+            SubscriptionTemplate("iCloud", "云服务", 6.0, Currency.CNY, BillingCycle.Monthly, SpendingMode.Fixed),
+            SubscriptionTemplate("云服务器", "云服务", 30.0, Currency.CNY, BillingCycle.Monthly, SpendingMode.Hybrid),
+            SubscriptionTemplate("域名", "云服务", 80.0, Currency.CNY, BillingCycle.Yearly, SpendingMode.Fixed),
+            SubscriptionTemplate("影音会员", "影音", 25.0, Currency.CNY, BillingCycle.Monthly, SpendingMode.Fixed),
+            SubscriptionTemplate("游戏点卡", "游戏", 100.0, Currency.CNY, BillingCycle.Custom, SpendingMode.Balance)
+        )
+    } else {
+        listOf(
+            SubscriptionTemplate("ChatGPT", "AI", 20.0, Currency.USD, BillingCycle.Monthly, SpendingMode.Fixed),
+            SubscriptionTemplate("iCloud", "Cloud", 0.99, Currency.USD, BillingCycle.Monthly, SpendingMode.Fixed),
+            SubscriptionTemplate("Cloud server", "Cloud", 5.0, Currency.USD, BillingCycle.Monthly, SpendingMode.Hybrid),
+            SubscriptionTemplate("Domain", "Cloud", 12.0, Currency.USD, BillingCycle.Yearly, SpendingMode.Fixed),
+            SubscriptionTemplate("Streaming", "Media", 9.99, Currency.USD, BillingCycle.Monthly, SpendingMode.Fixed),
+            SubscriptionTemplate("Game balance", "Games", 20.0, Currency.USD, BillingCycle.Custom, SpendingMode.Balance)
+        )
+    }
+}
+
 private fun scheduleReminders(context: Context, subscriptions: List<Subscription>, copy: Copy, daysBefore: Int) {
     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
     subscriptions.forEach { sub ->
         cancelReminder(context, sub)
+        if (sub.state != SubscriptionState.Active) return@forEach
         val intent = Intent(context, ReminderReceiver::class.java)
             .putExtra("title", copy.appName)
             .putExtra("body", reminderBody(sub.name, copy, daysBefore))
@@ -447,7 +678,7 @@ private fun exportBackup(subscriptions: List<Subscription>, settings: AppSetting
     val subs = JSONArray()
     subscriptions.forEach { subs.put(it.toJson()) }
     return JSONObject()
-        .put("schemaVersion", 2)
+        .put("schemaVersion", 3)
         .put("exportedAt", System.currentTimeMillis())
         .put("subscriptions", subs)
         .put("settings", settings.toJson())
@@ -475,6 +706,10 @@ private fun AppSettings.toJson(): JSONObject {
         .put("reminderDaysBefore", reminderDaysBefore)
         .put("primaryCurrency", primaryCurrency.name)
         .put("usdToCnyRate", usdToCnyRate)
+        .put("defaultCurrency", defaultCurrency.name)
+        .put("defaultCycle", defaultCycle.name)
+        .put("defaultCategory", defaultCategory)
+        .put("defaultSpendingMode", defaultSpendingMode.name)
 }
 
 private fun JSONObject.toSettings(): AppSettings {
@@ -484,7 +719,11 @@ private fun JSONObject.toSettings(): AppSettings {
         theme = optString("theme", AppThemeMode.Auto.name).toEnum(AppThemeMode.Auto),
         reminderDaysBefore = optInt("reminderDaysBefore", 0).coerceIn(0, 30),
         primaryCurrency = optString("primaryCurrency", Currency.CNY.name).toEnum(Currency.CNY),
-        usdToCnyRate = optDouble("usdToCnyRate", 7.2).takeIf { it > 0.0 } ?: 7.2
+        usdToCnyRate = optDouble("usdToCnyRate", 7.2).takeIf { it > 0.0 } ?: 7.2,
+        defaultCurrency = optString("defaultCurrency", Currency.CNY.name).toEnum(Currency.CNY),
+        defaultCycle = optString("defaultCycle", BillingCycle.Monthly.name).toEnum(BillingCycle.Monthly),
+        defaultCategory = optString("defaultCategory", "Other").ifBlank { "Other" },
+        defaultSpendingMode = optString("defaultSpendingMode", SpendingMode.Fixed.name).toEnum(SpendingMode.Fixed)
     )
 }
 
@@ -506,7 +745,11 @@ fun NativeSubRadar() {
     var showSettings by remember { mutableStateOf(false) }
     var displayMode by remember { mutableStateOf(DisplayMode.List) }
     var categoryFilter by remember { mutableStateOf<String?>(null) }
+    var smartFilter by remember { mutableStateOf(SmartFilter.All) }
     var pendingUndo by remember { mutableStateOf<Pair<Int, Subscription>?>(null) }
+    var renewalItem by remember { mutableStateOf<Subscription?>(null) }
+    var ledgerItem by remember { mutableStateOf<Subscription?>(null) }
+    var ledgerType by remember { mutableStateOf(LedgerType.Expense) }
     val subscriptions = remember { mutableStateListOf<Subscription>() }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri ?: return@rememberLauncherForActivityResult
@@ -540,8 +783,10 @@ fun NativeSubRadar() {
         if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
     }
 
-    BackHandler(enabled = showSettings || isCreating || editorItem != null) {
+    BackHandler(enabled = showSettings || isCreating || editorItem != null || renewalItem != null || ledgerItem != null) {
         when {
+            renewalItem != null -> renewalItem = null
+            ledgerItem != null -> ledgerItem = null
             isCreating || editorItem != null -> {
                 isCreating = false
                 editorItem = null
@@ -562,21 +807,24 @@ fun NativeSubRadar() {
                     settings = settings,
                     displayMode = displayMode,
                     categoryFilter = categoryFilter,
+                    smartFilter = smartFilter,
                     copy = copy,
                     palette = palette,
                     searchQuery = searchQuery,
                     onSearchChange = { searchQuery = it },
                     onDisplayModeChange = { displayMode = it },
                     onCategoryFilterChange = { categoryFilter = it },
+                    onSmartFilterChange = { smartFilter = it },
                     onOpenSettings = { showSettings = true },
                     onOpenEditor = { editorItem = it; isCreating = false },
-                    onRenew = { sub ->
-                        val baseDate = parseDate(sub.nextBillingDate) ?: LocalDate.now()
-                        val next = addCycle(baseDate, sub.cycle, sub.customCycleDuration, sub.customCycleUnit)
-                        val balance = sub.accountBalance?.let { if (it >= sub.price) ((it - sub.price) * 100).toLong() / 100.0 else it }
-                        val updated = sub.copy(nextBillingDate = next.toString(), accountBalance = balance)
+                    onRenew = { sub -> renewalItem = sub },
+                    onLedger = { sub, type ->
+                        ledgerItem = sub
+                        ledgerType = type
+                    },
+                    onStateChange = { sub, state ->
                         val index = subscriptions.indexOfFirst { it.id == sub.id }
-                        if (index >= 0) subscriptions[index] = updated
+                        if (index >= 0) subscriptions[index] = setSubscriptionState(subscriptions[index], state)
                         store.saveSubscriptions(subscriptions)
                         if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
                     },
@@ -610,6 +858,7 @@ fun NativeSubRadar() {
                 SubscriptionEditorOverlay(
                     visible = isCreating || editorItem != null,
                     initial = editorItem,
+                    settings = settings,
                     copy = copy,
                     palette = palette,
                     onDismiss = { isCreating = false; editorItem = null },
@@ -629,11 +878,21 @@ fun NativeSubRadar() {
                     onSave = { item ->
                         if (subscriptions.any { it.id == item.id }) {
                             val index = subscriptions.indexOfFirst { it.id == item.id }
-                            if (index >= 0) subscriptions[index] = item
+                            if (index >= 0) {
+                                val previous = subscriptions[index]
+                                subscriptions[index] = withPriceChange(previous, item)
+                            }
                         } else {
                             subscriptions.add(item)
                         }
-                        val renewed = autoRenew(subscriptions)
+                            settings = settings.copy(
+                                defaultCurrency = item.currency,
+                                defaultCycle = item.cycle,
+                                defaultCategory = item.category,
+                                defaultSpendingMode = item.spendingMode
+                            )
+                            store.saveSettings(settings)
+                            val renewed = autoRenew(subscriptions)
                         subscriptions.clear()
                         subscriptions.addAll(renewed)
                         store.saveSubscriptions(subscriptions)
@@ -642,6 +901,36 @@ fun NativeSubRadar() {
                         editorItem = null
                     }
                 )
+                renewalItem?.let { item ->
+                    RenewalDialog(
+                        sub = item,
+                        copy = copy,
+                        palette = palette,
+                        onDismiss = { renewalItem = null },
+                        onConfirm = { date, amount, note ->
+                            val index = subscriptions.indexOfFirst { it.id == item.id }
+                            if (index >= 0) subscriptions[index] = applyRenewal(subscriptions[index], date, amount, note)
+                            store.saveSubscriptions(subscriptions)
+                            if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
+                            renewalItem = null
+                        }
+                    )
+                }
+                ledgerItem?.let { item ->
+                    LedgerDialog(
+                        sub = item,
+                        type = ledgerType,
+                        copy = copy,
+                        palette = palette,
+                        onDismiss = { ledgerItem = null },
+                        onConfirm = { type, date, amount, note ->
+                            val index = subscriptions.indexOfFirst { it.id == item.id }
+                            if (index >= 0) subscriptions[index] = applyLedger(subscriptions[index], type, amount, date, note)
+                            store.saveSubscriptions(subscriptions)
+                            ledgerItem = null
+                        }
+                    )
+                }
                 pendingUndo?.let { (index, item) ->
                     MiuixSnackbar(
                         message = if (settings.language == AppLanguage.Zh) "\u5DF2\u5220\u9664" else "Deleted",
@@ -1006,30 +1295,50 @@ fun MainScreen(
     settings: AppSettings,
     displayMode: DisplayMode,
     categoryFilter: String?,
+    smartFilter: SmartFilter,
     copy: Copy,
     palette: Palette,
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     onDisplayModeChange: (DisplayMode) -> Unit,
     onCategoryFilterChange: (String?) -> Unit,
+    onSmartFilterChange: (SmartFilter) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenEditor: (Subscription) -> Unit,
     onRenew: (Subscription) -> Unit,
+    onLedger: (Subscription, LedgerType) -> Unit,
+    onStateChange: (Subscription, SubscriptionState) -> Unit,
     onCreate: () -> Unit
 ) {
-    val visibleItems = items.filter { categoryFilter == null || it.category == categoryFilter }
+    val duplicateIds = duplicateIds(allItems)
+    val visibleItems = items
+        .filter { categoryFilter == null || it.category == categoryFilter }
+        .filter { matchesSmartFilter(it, smartFilter) || (smartFilter == SmartFilter.Attention && duplicateIds.contains(it.id)) }
     val categories = allItems.map { it.category }.distinct().sorted()
+    val attentionItems = allItems.filter { needsAttention(it) || duplicateIds.contains(it.id) }
+    val lowBalanceCount = allItems.count { isLowBalance(it) }
     Box(Modifier.fillMaxSize().background(palette.bg)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             Header(allItems, settings, copy, palette, searchQuery, onSearchChange, onOpenSettings)
+            AttentionCenter(
+                items = attentionItems,
+                lowBalanceCount = lowBalanceCount,
+                duplicateCount = duplicateIds.size,
+                settings = settings,
+                palette = palette,
+                onShowAttention = { onSmartFilterChange(SmartFilter.Attention) },
+                onShowLowBalance = { onSmartFilterChange(SmartFilter.LowBalance) }
+            )
             DashboardControls(
                 displayMode = displayMode,
                 categories = categories,
                 categoryFilter = categoryFilter,
+                smartFilter = smartFilter,
                 settings = settings,
                 palette = palette,
                 onDisplayModeChange = onDisplayModeChange,
-                onCategoryFilterChange = onCategoryFilterChange
+                onCategoryFilterChange = onCategoryFilterChange,
+                onSmartFilterChange = onSmartFilterChange
             )
             val contentState = when {
                 allItems.isEmpty() -> "empty"
@@ -1053,14 +1362,17 @@ fun MainScreen(
                         description = if (settings.language == AppLanguage.Zh) "换个关键词试试。" else "Try another search term."
                     )
                     DisplayMode.Stats.name -> StatsView(visibleItems, settings, palette)
-                    DisplayMode.Calendar.name -> CalendarView(visibleItems, settings, copy, palette, onOpenEditor)
+                    DisplayMode.Calendar.name -> CalendarView(visibleItems, settings, copy, palette, onOpenEditor, onRenew, onLedger, onStateChange, duplicateIds)
                     else -> SubscriptionList(
                         items = visibleItems,
                         settings = settings,
                         copy = copy,
                         palette = palette,
                         onOpenEditor = onOpenEditor,
-                        onRenew = onRenew
+                        onRenew = onRenew,
+                        onLedger = onLedger,
+                        onStateChange = onStateChange,
+                        duplicateIds = duplicateIds
                     )
                 }
             }
@@ -1081,13 +1393,23 @@ fun DashboardControls(
     displayMode: DisplayMode,
     categories: List<String>,
     categoryFilter: String?,
+    smartFilter: SmartFilter,
     settings: AppSettings,
     palette: Palette,
     onDisplayModeChange: (DisplayMode) -> Unit,
-    onCategoryFilterChange: (String?) -> Unit
+    onCategoryFilterChange: (String?) -> Unit,
+    onSmartFilterChange: (SmartFilter) -> Unit
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Segmented(DisplayMode.entries, displayMode, { displayModeLabel(it, settings.language) }, palette, onDisplayModeChange)
+        Spacer(Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SmartFilter.entries.forEach { filter ->
+                CycleChip(smartFilterLabel(filter, settings.language), smartFilter == filter, palette) {
+                    onSmartFilterChange(filter)
+                }
+            }
+        }
         if (categories.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1105,13 +1427,71 @@ fun DashboardControls(
 }
 
 @Composable
+fun AttentionCenter(
+    items: List<Subscription>,
+    lowBalanceCount: Int,
+    duplicateCount: Int,
+    settings: AppSettings,
+    palette: Palette,
+    onShowAttention: () -> Unit,
+    onShowLowBalance: () -> Unit
+) {
+    val language = settings.language
+    val dueCount = items.count { isDueOrOverdue(it) }
+    if (items.isEmpty() && lowBalanceCount == 0) return
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        QuickSignalCard(
+            title = if (language == AppLanguage.Zh) "待处理" else "Attention",
+            value = items.size.toString(),
+            subtitle = if (language == AppLanguage.Zh) "到期 $dueCount · 重复 $duplicateCount" else "Due $dueCount · dupes $duplicateCount",
+            palette = palette,
+            modifier = Modifier.weight(1f),
+            onClick = onShowAttention
+        )
+        QuickSignalCard(
+            title = if (language == AppLanguage.Zh) "余额不足" else "Low balance",
+            value = lowBalanceCount.toString(),
+            subtitle = if (language == AppLanguage.Zh) "需要充值或调整" else "Needs top-up",
+            palette = palette,
+            modifier = Modifier.weight(1f),
+            onClick = onShowLowBalance
+        )
+    }
+}
+
+@Composable
+fun QuickSignalCard(title: String, value: String, subtitle: String, palette: Palette, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(palette.card)
+            .clickable(onClick = onClick)
+            .padding(14.dp)
+    ) {
+        Text(title, color = palette.muted, fontSize = 12.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = palette.text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text(subtitle, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
 fun SubscriptionList(
     items: List<Subscription>,
     settings: AppSettings,
     copy: Copy,
     palette: Palette,
     onOpenEditor: (Subscription) -> Unit,
-    onRenew: (Subscription) -> Unit
+    onRenew: (Subscription) -> Unit,
+    onLedger: (Subscription, LedgerType) -> Unit,
+    onStateChange: (Subscription, SubscriptionState) -> Unit,
+    duplicateIds: Set<String>
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1125,7 +1505,10 @@ fun SubscriptionList(
                 language = settings.language,
                 palette = palette,
                 onOpenEditor = onOpenEditor,
-                onRenew = onRenew
+                onRenew = onRenew,
+                onLedger = onLedger,
+                onStateChange = onStateChange,
+                isDuplicate = duplicateIds.contains(it.id)
             )
         }
     }
@@ -1134,12 +1517,13 @@ fun SubscriptionList(
 @Composable
 fun StatsView(items: List<Subscription>, settings: AppSettings, palette: Palette) {
     val language = settings.language
-    val nextSeven = items.count {
+    val activeItems = items.filter { it.state != SubscriptionState.Archived }
+    val nextSeven = activeItems.count {
         val days = ChronoUnit.DAYS.between(LocalDate.now(), parseDate(it.nextBillingDate) ?: LocalDate.now())
         days in 0..7
     }
-    val annual = items.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) * 12 }
-    val byCategory = items.groupBy { it.category }
+    val annual = activeItems.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) * 12 }
+    val byCategory = activeItems.groupBy { it.category }
         .mapValues { entry -> entry.value.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) } }
         .entries.sortedByDescending { it.value }
     LazyColumn(
@@ -1150,7 +1534,7 @@ fun StatsView(items: List<Subscription>, settings: AppSettings, palette: Palette
         item {
             StatCard(
                 title = if (language == AppLanguage.Zh) "\u6708\u5747\u652F\u51FA" else "Monthly average",
-                value = formatMoney(items.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) }, settings.primaryCurrency),
+                value = formatMoney(activeItems.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) }, settings.primaryCurrency),
                 palette = palette
             )
         }
@@ -1180,7 +1564,11 @@ fun CalendarView(
     settings: AppSettings,
     copy: Copy,
     palette: Palette,
-    onOpenEditor: (Subscription) -> Unit
+    onOpenEditor: (Subscription) -> Unit,
+    onRenew: (Subscription) -> Unit,
+    onLedger: (Subscription, LedgerType) -> Unit,
+    onStateChange: (Subscription, SubscriptionState) -> Unit,
+    duplicateIds: Set<String>
 ) {
     val grouped = items.sortedBy { it.nextBillingDate }.groupBy { it.nextBillingDate }
     LazyColumn(
@@ -1204,8 +1592,11 @@ fun CalendarView(
                     language = settings.language,
                     palette = palette,
                     onOpenEditor = onOpenEditor,
-                    onRenew = {},
-                    showRenewAction = false
+                    onRenew = onRenew,
+                    onLedger = onLedger,
+                    onStateChange = onStateChange,
+                    isDuplicate = duplicateIds.contains(it.id),
+                    showRenewAction = true
                 )
             }
         }
@@ -1304,6 +1695,9 @@ fun SubscriptionRow(
     palette: Palette,
     onOpenEditor: (Subscription) -> Unit,
     onRenew: (Subscription) -> Unit,
+    onLedger: (Subscription, LedgerType) -> Unit,
+    onStateChange: (Subscription, SubscriptionState) -> Unit,
+    isDuplicate: Boolean = false,
     modifier: Modifier = Modifier,
     showRenewAction: Boolean = true
 ) {
@@ -1312,7 +1706,16 @@ fun SubscriptionRow(
     val days = ChronoUnit.DAYS.between(today, next).toInt()
     val isToday = days == 0
     val isPast = days < 0
+    val issues = issueLabels(sub, language).let { labels ->
+        if (isDuplicate) {
+            labels + if (language == AppLanguage.Zh) "疑似重复" else "Possible duplicate"
+        } else {
+            labels
+        }
+    }
     val surface = when {
+        sub.state == SubscriptionState.Paused -> palette.field
+        sub.state == SubscriptionState.Archived -> palette.field
         isToday -> if (palette.bg == Color(0xFF0B0F14)) Color(0xFF33230A) else Color(0xFFFFF4D6)
         isPast -> if (palette.bg == Color(0xFF0B0F14)) Color(0xFF341515) else Color(0xFFFFEBEB)
         else -> palette.card
@@ -1333,8 +1736,37 @@ fun SubscriptionRow(
                 Spacer(Modifier.height(4.dp))
                 Text("${currencySymbol(sub.currency)}${"%.2f".format(sub.price)} ${cycleText(sub, copy, language)}", color = palette.text, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 Text(sub.category, color = palette.muted, fontSize = 12.sp)
+                if (sub.state != SubscriptionState.Active) {
+                    Text(stateLabel(sub.state, language), color = palette.warning, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
                 sub.accountBalance?.let {
                     Text("${copy.accountBalance}: ${currencySymbol(sub.currency)}${"%.2f".format(it)}", color = palette.muted, fontSize = 12.sp)
+                    val coverage = if (sub.price > 0) (it / sub.price).toInt() else 0
+                    val balanceHint = when {
+                        it < sub.price -> if (language == AppLanguage.Zh) {
+                            "余额不足 ${currencySymbol(sub.currency)}${"%.2f".format(sub.price - it)}"
+                        } else {
+                            "Short ${currencySymbol(sub.currency)}${"%.2f".format(sub.price - it)}"
+                        }
+                        else -> if (language == AppLanguage.Zh) "可覆盖 $coverage 次续费" else "Covers $coverage renewals"
+                    }
+                    Text(balanceHint, color = if (it < sub.price) palette.danger else palette.muted, fontSize = 12.sp)
+                }
+                if (sub.ledger.isNotEmpty()) {
+                    Text(
+                        if (language == AppLanguage.Zh) "最近：${ledgerTypeLabel(sub.ledger.first().type, language)} ${formatMoney(sub.ledger.first().amount, sub.currency)}" else "Latest: ${ledgerTypeLabel(sub.ledger.first().type, language)} ${formatMoney(sub.ledger.first().amount, sub.currency)}",
+                        color = palette.muted,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                latestPriceChange(sub)?.let {
+                    Text(
+                        if (language == AppLanguage.Zh) "价格变更：${formatMoney(it.amount, sub.currency)}" else "Price changed: ${formatMoney(it.amount, sub.currency)}",
+                        color = palette.warning,
+                        fontSize = 12.sp
+                    )
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -1348,23 +1780,47 @@ fun SubscriptionRow(
                     fontWeight = FontWeight.SemiBold
                 )
                 val status = when {
+                    sub.state == SubscriptionState.Paused -> if (language == AppLanguage.Zh) "已暂停提醒" else "Paused"
+                    sub.state == SubscriptionState.Archived -> if (language == AppLanguage.Zh) "已归档" else "Archived"
                     isToday -> copy.dueToday
-                    isPast -> copy.overdue.format(abs(days))
+                    isPast -> if (language == AppLanguage.Zh) "待确认续费 · ${copy.overdue.format(abs(days))}" else "Renewal pending · ${copy.overdue.format(abs(days))}"
                     else -> copy.inDays.format(days)
                 }
                 Text(status, color = palette.muted, fontSize = 12.sp)
             }
         }
-        if (sub.imageUri != null || ((isToday || isPast) && showRenewAction)) {
+        if (issues.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                issues.forEach { issue -> CycleChip(issue, true, palette) {} }
+            }
+        }
+        if (sub.imageUri != null || showRenewAction) {
             Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (sub.imageUri != null) {
                     Icon(Icons.Rounded.Image, null, tint = palette.accent, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(if (language == AppLanguage.Zh) "图片" else "Image", color = palette.accent, fontSize = 12.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                if ((isToday || isPast) && showRenewAction) {
+                if (showRenewAction && sub.state == SubscriptionState.Active) {
+                    TextButton(onClick = { onLedger(sub, LedgerType.Expense) }) {
+                        Text(if (language == AppLanguage.Zh) "记一笔" else "Log")
+                    }
+                }
+                if (sub.state != SubscriptionState.Active && showRenewAction) {
+                    TextButton(onClick = { onStateChange(sub, SubscriptionState.Active) }) {
+                        Text(if (language == AppLanguage.Zh) "恢复" else "Resume")
+                    }
+                }
+                if ((isToday || isPast) && showRenewAction && sub.state == SubscriptionState.Active) {
+                    TextButton(onClick = { onStateChange(sub, SubscriptionState.Paused) }) {
+                        Text(if (language == AppLanguage.Zh) "暂停" else "Pause")
+                    }
+                    TextButton(onClick = { onStateChange(sub, SubscriptionState.Archived) }) {
+                        Text(if (language == AppLanguage.Zh) "归档" else "Archive")
+                    }
                     Button(
                         onClick = { onRenew(sub) },
                         colors = ButtonDefaults.buttonColors(containerColor = palette.accentSoft, contentColor = palette.accent)
@@ -1391,6 +1847,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     var rateText by remember(settings.usdToCnyRate) { mutableStateOf(settings.usdToCnyRate.toString()) }
+    var defaultCategoryText by remember(settings.defaultCategory) { mutableStateOf(settings.defaultCategory) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         onSettings(settings.copy(notificationsEnabled = granted))
         if (!granted && Build.VERSION.SDK_INT >= 33) {
@@ -1490,6 +1947,47 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     Icons.Rounded.CreditCard,
+                    if (settings.language == AppLanguage.Zh) "新建默认值" else "New subscription defaults",
+                    palette,
+                    if (settings.language == AppLanguage.Zh) "减少重复填写" else "Reduce repeated input"
+                ) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Segmented(Currency.entries, settings.defaultCurrency, { currencySymbol(it) }, palette) {
+                            onSettings(settings.copy(defaultCurrency = it))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Segmented(BillingCycle.entries.filter { it != BillingCycle.Custom }, settings.defaultCycle.takeIf { it != BillingCycle.Custom } ?: BillingCycle.Monthly, { cycleShortLabel(it, settings.language) }, palette) {
+                            onSettings(settings.copy(defaultCycle = it))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Segmented(SpendingMode.entries, settings.defaultSpendingMode, { modeLabel(it, settings.language) }, palette) {
+                            onSettings(settings.copy(defaultSpendingMode = it))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = defaultCategoryText,
+                            onValueChange = {
+                                defaultCategoryText = it
+                                onSettings(settings.copy(defaultCategory = it.ifBlank { "Other" }))
+                            },
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = palette.field,
+                                unfocusedContainerColor = palette.field,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                contentColor = palette.text,
+                                placeholderColor = palette.muted
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.width(130.dp)
+                        )
+                    }
+                }
+            }
+            item {
+                SettingsCard(
+                    Icons.Rounded.CreditCard,
                     if (settings.language == AppLanguage.Zh) "\u5BFC\u5165\u5907\u4EFD" else "Import backup",
                     palette
                 ) {
@@ -1506,7 +2004,7 @@ fun SettingsScreen(
                 }
             }
             item {
-                SettingsCard(Icons.Rounded.CreditCard, "SubRadar v2.0.0.1", palette, copy.about) {}
+                SettingsCard(Icons.Rounded.CreditCard, "SubRadar v2.0.0.2", palette, copy.about) {}
             }
         }
     }
@@ -1569,6 +2067,7 @@ fun <T> Segmented(values: List<T>, current: T, label: (T) -> String, palette: Pa
 fun SubscriptionEditorOverlay(
     visible: Boolean,
     initial: Subscription?,
+    settings: AppSettings,
     copy: Copy,
     palette: Palette,
     onDismiss: () -> Unit,
@@ -1605,6 +2104,7 @@ fun SubscriptionEditorOverlay(
         ) {
             SubscriptionEditorSheet(
                 initial = initial,
+                settings = settings,
                 copy = copy,
                 palette = palette,
                 onDismiss = onDismiss,
@@ -1619,6 +2119,7 @@ fun SubscriptionEditorOverlay(
 @Composable
 fun SubscriptionEditorSheet(
     initial: Subscription?,
+    settings: AppSettings,
     copy: Copy,
     palette: Palette,
     onDismiss: () -> Unit,
@@ -1628,14 +2129,16 @@ fun SubscriptionEditorSheet(
     val context = LocalContext.current
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var price by remember { mutableStateOf(initial?.price?.toString().orEmpty()) }
-    var currency by remember { mutableStateOf(initial?.currency ?: Currency.CNY) }
-    var cycle by remember { mutableStateOf(initial?.cycle ?: BillingCycle.Monthly) }
+    var currency by remember { mutableStateOf(initial?.currency ?: settings.defaultCurrency) }
+    var cycle by remember { mutableStateOf(initial?.cycle ?: settings.defaultCycle) }
     var customDuration by remember { mutableStateOf((initial?.customCycleDuration ?: 1).toString()) }
     var customUnit by remember { mutableStateOf(initial?.customCycleUnit ?: CycleUnit.Month) }
     var nextBillingDate by remember { mutableStateOf(initial?.nextBillingDate ?: LocalDate.now().toString()) }
     var startDate by remember { mutableStateOf(initial?.startDate.orEmpty()) }
     var balance by remember { mutableStateOf(initial?.accountBalance?.toString().orEmpty()) }
-    var category by remember { mutableStateOf(initial?.category ?: "Other") }
+    var spendingMode by remember { mutableStateOf(initial?.spendingMode ?: settings.defaultSpendingMode) }
+    var subscriptionState by remember { mutableStateOf(initial?.state ?: SubscriptionState.Active) }
+    var category by remember { mutableStateOf(initial?.category ?: settings.defaultCategory) }
     var notes by remember { mutableStateOf(initial?.notes.orEmpty()) }
     var imageUri by remember { mutableStateOf(initial?.imageUri) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -1699,6 +2202,25 @@ fun SubscriptionEditorSheet(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.heightIn(max = formMaxHeight)
             ) {
+                if (initial == null) {
+                    item {
+                        Column {
+                            Text(if (copy === zhCopy) "快速模板" else "Quick templates", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                subscriptionTemplates(copy === zhCopy).forEach { template ->
+                                    CycleChip(template.name, false, palette) {
+                                        name = template.name
+                                        price = template.price.toString()
+                                        currency = template.currency
+                                        cycle = template.cycle
+                                        category = template.category
+                                        spendingMode = template.spendingMode
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 item { Field(name, { name = it }, copy.serviceName, palette) }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1755,6 +2277,30 @@ fun SubscriptionEditorSheet(
                 }
                 item { Field(balance, { balance = it }, copy.accountBalance, palette, KeyboardType.Decimal) }
                 item {
+                    Column {
+                        Text(if (copy === zhCopy) "消费模式" else "Spending mode", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SpendingMode.entries.forEach { mode ->
+                                CycleChip(modeLabel(mode, if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En), spendingMode == mode, palette) {
+                                    spendingMode = mode
+                                }
+                            }
+                        }
+                    }
+                }
+                item {
+                    Column {
+                        Text(if (copy === zhCopy) "订阅状态" else "Subscription state", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SubscriptionState.entries.forEach { state ->
+                                CycleChip(stateLabel(state, if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En), subscriptionState == state, palette) {
+                                    subscriptionState = state
+                                }
+                            }
+                        }
+                    }
+                }
+                item {
                     Field(
                         value = category,
                         onValueChange = { category = it },
@@ -1770,6 +2316,16 @@ fun SubscriptionEditorSheet(
                     }
                 }
                 item { Field(notes, { notes = it }, copy.notes, palette, minLines = 3) }
+                if (!initial?.ledger.isNullOrEmpty()) {
+                    item {
+                        LedgerHistory(
+                            entries = initial?.ledger.orEmpty(),
+                            currency = currency,
+                            language = if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En,
+                            palette = palette
+                        )
+                    }
+                }
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         imageUri?.let {
@@ -1810,6 +2366,9 @@ fun SubscriptionEditorSheet(
                                     nextBillingDate = nextBillingDate,
                                     startDate = startDate.ifBlank { null },
                                     accountBalance = balance.toDoubleOrNull(),
+                                    spendingMode = spendingMode,
+                                    state = subscriptionState,
+                                    ledger = initial?.ledger.orEmpty(),
                                     category = category.trim().ifBlank { "Other" },
                                     notes = notes.ifBlank { null },
                                     imageUri = imageUri,
@@ -1935,6 +2494,206 @@ fun DateButton(
     }
 }
 
+@Composable
+fun RenewalDialog(
+    sub: Subscription,
+    copy: Copy,
+    palette: Palette,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate, Double, String?) -> Unit
+) {
+    val language = if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En
+    var dateText by remember { mutableStateOf(LocalDate.now().toString()) }
+    var amountText by remember { mutableStateOf(sub.price.toString()) }
+    var note by remember { mutableStateOf("") }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val amount = amountText.toDoubleOrNull()
+
+    LedgerPanel(
+        title = if (language == AppLanguage.Zh) "确认续费" else "Confirm renewal",
+        palette = palette,
+        onDismiss = onDismiss
+    ) {
+        Text(sub.name, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(10.dp))
+        DateButton(
+            label = if (language == AppLanguage.Zh) "实际续费日期" else "Actual renewal date",
+            value = dateText,
+            palette = palette,
+            onClick = { showDatePicker = true }
+        )
+        Spacer(Modifier.height(10.dp))
+        Field(amountText, { amountText = it }, if (language == AppLanguage.Zh) "实际付款金额" else "Actual amount", palette, KeyboardType.Decimal)
+        Spacer(Modifier.height(10.dp))
+        Field(note, { note = it }, if (language == AppLanguage.Zh) "备注" else "Note", palette)
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = { onConfirm(parseDate(dateText) ?: LocalDate.now(), amount ?: sub.price, note) },
+            enabled = amount != null && amount > 0.0,
+            colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = Color.White),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (language == AppLanguage.Zh) "确认并计算下次日期" else "Confirm and update next date", fontWeight = FontWeight.Bold)
+        }
+    }
+
+    if (showDatePicker) {
+        PlatformDatePicker(
+            initial = parseDate(dateText) ?: LocalDate.now(),
+            onDismiss = { showDatePicker = false },
+            onDate = {
+                dateText = it.toString()
+                showDatePicker = false
+            }
+        )
+    }
+}
+
+@Composable
+fun LedgerDialog(
+    sub: Subscription,
+    type: LedgerType,
+    copy: Copy,
+    palette: Palette,
+    onDismiss: () -> Unit,
+    onConfirm: (LedgerType, LocalDate, Double, String?) -> Unit
+) {
+    val language = if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En
+    var selectedType by remember { mutableStateOf(type) }
+    var dateText by remember { mutableStateOf(LocalDate.now().toString()) }
+    var amountText by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val amount = amountText.toDoubleOrNull()
+
+    LedgerPanel(
+        title = if (language == AppLanguage.Zh) "记一笔" else "Log transaction",
+        palette = palette,
+        onDismiss = onDismiss
+    ) {
+        Text(sub.name, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(LedgerType.Expense, LedgerType.TopUp, LedgerType.Refund, LedgerType.Adjustment).forEach { item ->
+                CycleChip(ledgerTypeLabel(item, language), selectedType == item, palette) { selectedType = item }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        DateButton(
+            label = if (language == AppLanguage.Zh) "发生日期" else "Date",
+            value = dateText,
+            palette = palette,
+            onClick = { showDatePicker = true }
+        )
+        Spacer(Modifier.height(10.dp))
+        Field(
+            amountText,
+            { amountText = it },
+            if (selectedType == LedgerType.Adjustment) {
+                if (language == AppLanguage.Zh) "调整后的余额" else "Balance after adjustment"
+            } else {
+                if (language == AppLanguage.Zh) "金额" else "Amount"
+            },
+            palette,
+            KeyboardType.Decimal
+        )
+        Spacer(Modifier.height(10.dp))
+        Field(note, { note = it }, if (language == AppLanguage.Zh) "备注" else "Note", palette)
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = { onConfirm(selectedType, parseDate(dateText) ?: LocalDate.now(), amount ?: 0.0, note) },
+            enabled = amount != null && amount >= 0.0,
+            colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = Color.White),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (language == AppLanguage.Zh) "保存记录" else "Save transaction", fontWeight = FontWeight.Bold)
+        }
+    }
+
+    if (showDatePicker) {
+        PlatformDatePicker(
+            initial = parseDate(dateText) ?: LocalDate.now(),
+            onDismiss = { showDatePicker = false },
+            onDate = {
+                dateText = it.toString()
+                showDatePicker = false
+            }
+        )
+    }
+}
+
+@Composable
+fun LedgerPanel(title: String, palette: Palette, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.34f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier
+                .padding(22.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(palette.card)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {}
+                .padding(20.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, null, tint = palette.text) }
+            }
+            Spacer(Modifier.height(8.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+fun PlatformDatePicker(initial: LocalDate, onDismiss: () -> Unit, onDate: (LocalDate) -> Unit) {
+    val context = LocalContext.current
+    LaunchedEffect(initial) {
+        DatePickerDialog(
+            context,
+            { _, year, month, day -> onDate(LocalDate.of(year, month + 1, day)) },
+            initial.year,
+            initial.monthValue - 1,
+            initial.dayOfMonth
+        ).apply {
+            setOnCancelListener { onDismiss() }
+            setOnDismissListener { onDismiss() }
+        }.show()
+    }
+}
+
+@Composable
+fun LedgerHistory(entries: List<LedgerEntry>, currency: Currency, language: AppLanguage, palette: Palette) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(palette.field).padding(14.dp)) {
+        Text(if (language == AppLanguage.Zh) "最近记录" else "Recent history", color = palette.text, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        entries.take(5).forEach { entry ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(ledgerTypeLabel(entry.type, language), color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text(entry.note ?: entry.date, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(formatMoney(entry.amount, currency), color = palette.text, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    entry.balanceAfter?.let { Text(if (language == AppLanguage.Zh) "余额 ${formatMoney(it, currency)}" else "Balance ${formatMoney(it, currency)}", color = palette.muted, fontSize = 12.sp) }
+                }
+            }
+        }
+    }
+}
+
 private fun persistImage(context: Context, uri: Uri): String? {
     return runCatching {
         val dir = File(context.filesDir, "images").apply { mkdirs() }
@@ -1957,10 +2716,19 @@ private fun cycleText(sub: Subscription, copy: Copy, language: AppLanguage): Str
     }
 }
 
+private fun cycleShortLabel(cycle: BillingCycle, language: AppLanguage): String {
+    return when (cycle) {
+        BillingCycle.Monthly -> if (language == AppLanguage.Zh) "月" else "Mo"
+        BillingCycle.Quarterly -> if (language == AppLanguage.Zh) "季" else "Qtr"
+        BillingCycle.Yearly -> if (language == AppLanguage.Zh) "年" else "Yr"
+        BillingCycle.Custom -> if (language == AppLanguage.Zh) "自定" else "Custom"
+    }
+}
+
 private fun totalMonthly(items: List<Subscription>, language: AppLanguage): String {
     var cny = 0.0
     var usd = 0.0
-    items.forEach { sub ->
+    items.filter { it.state != SubscriptionState.Archived }.forEach { sub ->
         val monthly = when (sub.cycle) {
             BillingCycle.Monthly -> sub.price
             BillingCycle.Quarterly -> sub.price / 3
@@ -2012,7 +2780,47 @@ private fun displayModeLabel(mode: DisplayMode, language: AppLanguage): String {
     }
 }
 
+private fun smartFilterLabel(filter: SmartFilter, language: AppLanguage): String {
+    return when (filter) {
+        SmartFilter.All -> if (language == AppLanguage.Zh) "全部" else "All"
+        SmartFilter.Attention -> if (language == AppLanguage.Zh) "待处理" else "Attention"
+        SmartFilter.Due -> if (language == AppLanguage.Zh) "到期" else "Due"
+        SmartFilter.LowBalance -> if (language == AppLanguage.Zh) "余额不足" else "Low balance"
+        SmartFilter.Active -> if (language == AppLanguage.Zh) "活跃" else "Active"
+        SmartFilter.Archived -> if (language == AppLanguage.Zh) "归档" else "Archived"
+    }
+}
+
+private fun modeLabel(mode: SpendingMode, language: AppLanguage): String {
+    return when (mode) {
+        SpendingMode.Fixed -> if (language == AppLanguage.Zh) "固定订阅" else "Fixed"
+        SpendingMode.Balance -> if (language == AppLanguage.Zh) "余额账户" else "Balance"
+        SpendingMode.Metered -> if (language == AppLanguage.Zh) "按量消费" else "Metered"
+        SpendingMode.Hybrid -> if (language == AppLanguage.Zh) "固定 + 按量" else "Hybrid"
+    }
+}
+
+private fun ledgerTypeLabel(type: LedgerType, language: AppLanguage): String {
+    return when (type) {
+        LedgerType.Renewal -> if (language == AppLanguage.Zh) "续费" else "Renewal"
+        LedgerType.Expense -> if (language == AppLanguage.Zh) "消费" else "Expense"
+        LedgerType.TopUp -> if (language == AppLanguage.Zh) "充值" else "Top-up"
+        LedgerType.Refund -> if (language == AppLanguage.Zh) "退款" else "Refund"
+        LedgerType.Adjustment -> if (language == AppLanguage.Zh) "调整" else "Adjustment"
+        LedgerType.PriceChange -> if (language == AppLanguage.Zh) "价格变更" else "Price change"
+    }
+}
+
+private fun stateLabel(state: SubscriptionState, language: AppLanguage): String {
+    return when (state) {
+        SubscriptionState.Active -> if (language == AppLanguage.Zh) "正常" else "Active"
+        SubscriptionState.Paused -> if (language == AppLanguage.Zh) "暂停" else "Paused"
+        SubscriptionState.Archived -> if (language == AppLanguage.Zh) "归档" else "Archived"
+    }
+}
+
 private fun monthlyInCurrency(sub: Subscription, target: Currency, usdToCnyRate: Double): Double {
+    if (sub.state == SubscriptionState.Archived) return 0.0
     val monthly = when (sub.cycle) {
         BillingCycle.Monthly -> sub.price
         BillingCycle.Quarterly -> sub.price / 3
