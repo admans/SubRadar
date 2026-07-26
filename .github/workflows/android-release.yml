@@ -70,81 +70,77 @@ jobs:
             echo "VERSION_TAG=${{ github.ref_name }}" >> $GITHUB_ENV
           fi
 
-      # 2. Generate Bilingual Changelog (Robust Version)
-      - name: Generate Bilingual Changelog
+      # 2. Generate detailed bilingual changelog
+      - name: Generate Detailed Release Notes
         id: changelog
         run: |
-          # Logic to determine the range of commits for the changelog
-          # We want commits from the Previous Tag (exclusive) to Current HEAD (inclusive)
-          
-          # Check if HEAD is exactly a tag (e.g. triggered by tag push)
           if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
-             # If we are on a tag, we need to search backwards from its parent to find the previous tag
              PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           else
-             # If we are NOT on a tag (e.g. workflow_dispatch on main), the closest reachable tag IS the previous release
              PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
           fi
-          
-          if [ -z "$PREV_TAG" ]; then
-            echo "No previous tag found. Generating full log."
-            LOG_RANGE="HEAD"
-          else
-            echo "Generating changelog from $PREV_TAG to HEAD..."
-            LOG_RANGE="$PREV_TAG..HEAD"
-          fi
-          
-          # Initialize content
-          CONTENT=""
 
-          # Function to generate section with translation
-          generate_section() {
+          if [ -z "$PREV_TAG" ]; then
+            LOG_RANGE="HEAD"
+            RANGE_LABEL="Initial history -> ${{ env.VERSION_TAG }}"
+          else
+            LOG_RANGE="$PREV_TAG..HEAD"
+            RANGE_LABEL="$PREV_TAG -> ${{ env.VERSION_TAG }}"
+          fi
+
+          TOTAL_COMMITS=$(git log $LOG_RANGE --pretty=format:"%h" | wc -l | tr -d ' ')
+          CONTENT="### Release Scope | 发布范围\n"
+          CONTENT="$CONTENT\n- Version range: **$RANGE_LABEL**"
+          CONTENT="$CONTENT\n- Included commits: **$TOTAL_COMMITS**"
+          CONTENT="$CONTENT\n- APK artifact: **SubRadar-${{ env.VERSION_TAG }}.apk**"
+          CONTENT="$CONTENT\n\n### What To Check After Updating | 更新后建议检查"
+          CONTENT="$CONTENT\n- Open the app and confirm subscriptions, reminders, balances, and backup import/export still behave as expected."
+          CONTENT="$CONTENT\n- 打开应用后，建议检查订阅列表、提醒、余额记录、备份导入导出是否符合预期。"
+
+          append_logs() {
             TITLE="$1"
             GREP_PATTERN="$2"
-            
-            # Get logs matching the pattern
-            LOGS=$(git log $LOG_RANGE --pretty=format:"%s (%h)" --grep="$GREP_PATTERN" -i || true)
-            
+            EXPLAIN_EN="$3"
+            EXPLAIN_ZH="$4"
+            LOGS=$(git log $LOG_RANGE --pretty=format:"%s (%h)" --grep="$GREP_PATTERN" -i --extended-regexp || true)
+
             if [ ! -z "$LOGS" ]; then
               CONTENT="$CONTENT\n\n### $TITLE"
-              
-              # Process line by line
+              CONTENT="$CONTENT\n$EXPLAIN_EN"
+              CONTENT="$CONTENT\n$EXPLAIN_ZH"
               while IFS= read -r line; do
                 if [ ! -z "$line" ]; then
-                  # Extract text without hash for better translation
                   CLEAN_MSG=$(echo "$line" | sed -E 's/ \([a-f0-9]+\)$//')
-                  
-                  # Translate: -b (brief), -s (source en), -t (target zh-CN), -e (engine google)
-                  # 2>/dev/null to suppress warnings
                   TRANS=$(trans -b -e google -s en -t zh-CN "$CLEAN_MSG" 2>/dev/null | head -n1)
-                  
                   CONTENT="$CONTENT\n- $line"
                   if [ ! -z "$TRANS" ] && [ "$TRANS" != "$CLEAN_MSG" ]; then
-                     CONTENT="$CONTENT\n  <small>$TRANS</small>"
+                    CONTENT="$CONTENT\n  <small>$TRANS</small>"
                   fi
                 fi
               done <<< "$LOGS"
             fi
           }
-          
-          # 1. Features
-          generate_section "New Features | 新功能" "^\(feat\|add\|new\|implement\|feature\)"
-          
-          # 2. Fixes
-          generate_section "Bug Fixes | 问题修复" "^\(fix\|bug\|issue\|resolve\|repair\)"
-          
-          # 3. Improvements
-          generate_section "Improvements | 改进优化" "^\(update\|refactor\|style\|chore\|perf\|docs\|optimize\)"
-          
-          # 4. Others (Catch-all, inverted grep)
-          # Note: We skip translation for 'Others' to save time/api calls on minor things, 
-          # or you can enable it by copying the logic above. Here we just list them.
-          OTHERS=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --invert-grep --grep="^\(feat\|add\|new\|implement\|feature\|fix\|bug\|issue\|resolve\|repair\|update\|refactor\|style\|chore\|perf\|docs\|optimize\|Release\|Merge\)" -i || true)
+
+          append_logs "New Features | 新功能" "^(feat|feature|add|new|implement)" "- User-visible capabilities added in this release." "- 本版本新增的用户可见能力。"
+          append_logs "Workflow Improvements | 使用效率优化" "(efficiency|workflow|quick|filter|default|template|automation|reminder|backup|ledger|balance|subscription|setting|home|search)" "- Changes that reduce daily maintenance work or make frequent actions faster." "- 降低日常维护成本、让常用操作更快的改动。"
+          append_logs "UI And Interaction Polish | 界面与交互打磨" "(ui|icon|layout|align|animation|miuix|theme|dialog|sheet|card|visual|style)" "- Layout, motion, icon, and visual consistency updates." "- 布局、动效、图标和视觉一致性相关调整。"
+          append_logs "Bug Fixes | 问题修复" "^(fix|bug|issue|resolve|repair|hotfix)" "- Fixes for incorrect behavior, build failures, or edge cases." "- 修复错误行为、构建失败或边界情况。"
+          append_logs "Build, Release, And Docs | 构建、发布与文档" "(build|release|version|gradle|ci|workflow|docs|readme|changelog)" "- Project maintenance, release automation, documentation, and versioning changes." "- 项目维护、发布自动化、文档和版本号相关改动。"
+          append_logs "Code Maintenance | 代码维护" "^(refactor|chore|perf|optimize|cleanup)" "- Internal cleanup and implementation improvements." "- 内部整理和实现层优化。"
+
+          OTHERS=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --invert-grep --extended-regexp --grep="^(feat|feature|add|new|implement|fix|bug|issue|resolve|repair|hotfix|refactor|chore|perf|optimize)|efficiency|workflow|quick|filter|default|template|automation|reminder|backup|ledger|balance|subscription|setting|home|search|ui|icon|layout|align|animation|miuix|theme|dialog|sheet|card|visual|style|build|release|version|gradle|ci|docs|readme|changelog|Merge" -i || true)
           if [ ! -z "$OTHERS" ]; then
-            CONTENT="$CONTENT\n\n### Other Changes | 其他更改\n$OTHERS"
+            CONTENT="$CONTENT\n\n### Other Changes | 其他更改"
+            CONTENT="$CONTENT\n- Additional commits that did not match the main categories."
+            CONTENT="$CONTENT\n- 未匹配到主要分类的其他提交。"
+            CONTENT="$CONTENT\n$OTHERS"
           fi
-          
-          # Handle multiline string for GitHub Actions output
+
+          FULL_LOG=$(git log $LOG_RANGE --pretty=format:"- %s (%h, %ad)" --date=short || true)
+          if [ ! -z "$FULL_LOG" ]; then
+            CONTENT="$CONTENT\n\n### Full Commit List | 完整提交列表\n$FULL_LOG"
+          fi
+
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "CHANGELOG_BODY<<$EOF" >> $GITHUB_ENV
           echo -e "$CONTENT" >> $GITHUB_ENV
@@ -190,7 +186,7 @@ jobs:
 
             ${{ github.event.inputs.notes }}
 
-            ### Detailed Changes | 详细变更
+            ### Automatically Generated Details | 自动生成的详细变更
 
             ${{ env.CHANGELOG_BODY }}
 
