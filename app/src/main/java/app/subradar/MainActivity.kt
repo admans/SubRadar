@@ -1319,15 +1319,17 @@ fun MainScreen(
     val lowBalanceCount = allItems.count { isLowBalance(it) }
     Box(Modifier.fillMaxSize().background(palette.bg)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Header(allItems, settings, copy, palette, searchQuery, onSearchChange, onOpenSettings)
-            AttentionCenter(
-                items = attentionItems,
-                lowBalanceCount = lowBalanceCount,
-                duplicateCount = duplicateIds.size,
+            CompactHeader(
+                items = allItems,
                 settings = settings,
+                copy = copy,
                 palette = palette,
-                onShowAttention = { onSmartFilterChange(SmartFilter.Attention) },
-                onShowLowBalance = { onSmartFilterChange(SmartFilter.LowBalance) }
+                searchQuery = searchQuery,
+                attentionCount = attentionItems.size,
+                lowBalanceCount = lowBalanceCount,
+                onSearchChange = onSearchChange,
+                onOpenSettings = onOpenSettings,
+                onShowAttention = { onSmartFilterChange(SmartFilter.Attention) }
             )
             DashboardControls(
                 displayMode = displayMode,
@@ -1400,18 +1402,20 @@ fun DashboardControls(
     onCategoryFilterChange: (String?) -> Unit,
     onSmartFilterChange: (SmartFilter) -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Segmented(DisplayMode.entries, displayMode, { displayModeLabel(it, settings.language) }, palette, onDisplayModeChange)
-        Spacer(Modifier.height(10.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmartFilter.entries.forEach { filter ->
-                CycleChip(smartFilterLabel(filter, settings.language), smartFilter == filter, palette) {
-                    onSmartFilterChange(filter)
-                }
-            }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Segmented(DisplayMode.entries, displayMode, { displayModeLabel(it, settings.language) }, palette, onDisplayModeChange)
+            Spacer(Modifier.weight(1f))
+            Segmented(
+                listOf(SmartFilter.All, SmartFilter.Attention, SmartFilter.LowBalance, SmartFilter.Archived),
+                smartFilter,
+                { smartFilterLabel(it, settings.language) },
+                palette,
+                onSmartFilterChange
+            )
         }
         if (categories.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CycleChip(if (settings.language == AppLanguage.Zh) "\u5168\u90E8" else "All", categoryFilter == null, palette) {
                     onCategoryFilterChange(null)
@@ -1423,6 +1427,66 @@ fun DashboardControls(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun CompactHeader(
+    items: List<Subscription>,
+    settings: AppSettings,
+    copy: Copy,
+    palette: Palette,
+    searchQuery: String,
+    attentionCount: Int,
+    lowBalanceCount: Int,
+    onSearchChange: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+    onShowAttention: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth().background(palette.bg).padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(copy.appName, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                Text("${totalMonthly(items, settings.language)} ${copy.totalMonthly}", color = palette.muted, fontSize = 12.sp)
+            }
+            if (attentionCount > 0 || lowBalanceCount > 0) {
+                TextButton(onClick = onShowAttention) {
+                    Text(
+                        if (settings.language == AppLanguage.Zh) "待处理 $attentionCount" else "Attention $attentionCount",
+                        color = palette.warning,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Rounded.Settings, null, tint = palette.text)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearchChange,
+            placeholder = { Text(copy.search) },
+            leadingIcon = { Icon(Icons.Rounded.Search, null) },
+            trailingIcon = {
+                if (searchQuery.isNotBlank()) {
+                    IconButton(onClick = { onSearchChange("") }) {
+                        Icon(Icons.Rounded.Close, null)
+                    }
+                }
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(16.dp),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = palette.field,
+                unfocusedContainerColor = palette.field,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                contentColor = palette.text,
+                placeholderColor = palette.muted
+            ),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 48.dp)
+        )
     }
 }
 
@@ -1862,149 +1926,116 @@ fun SettingsScreen(
         }
         LazyColumn(contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
-                SettingsCard(Icons.Rounded.Palette, copy.appearance, palette) {
-                    Segmented(AppThemeMode.entries, settings.theme, { themeLabel(it, settings.language) }, palette) {
-                        onSettings(settings.copy(theme = it))
+                SettingsSection(title = if (settings.language == AppLanguage.Zh) "偏好" else "Preferences", palette = palette) {
+                    SettingsRow(Icons.Rounded.Palette, copy.appearance, palette) {
+                        Segmented(AppThemeMode.entries, settings.theme, { themeLabel(it, settings.language) }, palette) {
+                            onSettings(settings.copy(theme = it))
+                        }
+                    }
+                    SettingsRow(Icons.Rounded.Translate, copy.language, palette) {
+                        Segmented(AppLanguage.entries, settings.language, { if (it == AppLanguage.Zh) "中文" else "EN" }, palette) {
+                            onSettings(settings.copy(language = it))
+                        }
                     }
                 }
             }
             item {
-                SettingsCard(Icons.Rounded.Translate, copy.language, palette) {
-                    Segmented(AppLanguage.entries, settings.language, { if (it == AppLanguage.Zh) "中文" else "EN" }, palette) {
-                        onSettings(settings.copy(language = it))
-                    }
-                }
-            }
-            item {
-                SettingsCard(Icons.Rounded.Notifications, copy.notifications, palette, copy.notificationsDesc) {
-                    Switch(
-                        checked = settings.notificationsEnabled,
-                        onCheckedChange = { enabled ->
-                            if (enabled && Build.VERSION.SDK_INT >= 33 &&
-                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                            ) {
-                                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            } else {
-                                onSettings(settings.copy(notificationsEnabled = enabled))
+                SettingsSection(title = if (settings.language == AppLanguage.Zh) "提醒" else "Reminders", palette = palette) {
+                    SettingsRow(Icons.Rounded.Notifications, copy.notifications, palette, copy.notificationsDesc) {
+                        Switch(
+                            checked = settings.notificationsEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled && Build.VERSION.SDK_INT >= 33 &&
+                                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    onSettings(settings.copy(notificationsEnabled = enabled))
+                                }
                             }
+                        )
+                    }
+                    SettingsRow(
+                        Icons.Rounded.CalendarMonth,
+                        if (settings.language == AppLanguage.Zh) "\u63D0\u524D\u63D0\u9192" else "Lead time",
+                        palette,
+                        if (settings.language == AppLanguage.Zh) "\u5230\u671F\u524D\u591A\u5C11\u5929" else "Days before renewal"
+                    ) {
+                        Segmented(listOf(0, 1, 3, 7), settings.reminderDaysBefore, { it.toString() }, palette) {
+                            onSettings(settings.copy(reminderDaysBefore = it))
                         }
-                    )
-                }
-            }
-            item {
-                SettingsCard(
-                    Icons.Rounded.CalendarMonth,
-                    if (settings.language == AppLanguage.Zh) "\u63D0\u524D\u63D0\u9192" else "Reminder lead time",
-                    palette,
-                    if (settings.language == AppLanguage.Zh) "\u5230\u671F\u524D\u591A\u5C11\u5929\u63D0\u9192" else "Days before renewal"
-                ) {
-                    Segmented(listOf(0, 1, 3, 7), settings.reminderDaysBefore, { it.toString() }, palette) {
-                        onSettings(settings.copy(reminderDaysBefore = it))
                     }
                 }
             }
             item {
-                SettingsCard(
-                    Icons.Rounded.Wallet,
-                    if (settings.language == AppLanguage.Zh) "\u4E3B\u8981\u8D27\u5E01" else "Primary currency",
-                    palette
-                ) {
-                    Segmented(Currency.entries, settings.primaryCurrency, { currencySymbol(it) }, palette) {
-                        onSettings(settings.copy(primaryCurrency = it))
+                SettingsSection(title = if (settings.language == AppLanguage.Zh) "货币" else "Currency", palette = palette) {
+                    SettingsRow(
+                        Icons.Rounded.Wallet,
+                        if (settings.language == AppLanguage.Zh) "\u4E3B\u8981\u8D27\u5E01" else "Primary currency",
+                        palette
+                    ) {
+                        Segmented(Currency.entries, settings.primaryCurrency, { currencySymbol(it) }, palette) {
+                            onSettings(settings.copy(primaryCurrency = it))
+                        }
                     }
-                }
-            }
-            item {
-                SettingsCard(
-                    Icons.Rounded.Wallet,
-                    if (settings.language == AppLanguage.Zh) "\u7F8E\u5143\u6C47\u7387" else "USD rate",
-                    palette,
-                    if (settings.language == AppLanguage.Zh) "1 USD = ${settings.usdToCnyRate} CNY" else "1 USD = ${settings.usdToCnyRate} CNY"
-                ) {
-                    OutlinedTextField(
-                        value = rateText,
-                        onValueChange = {
-                            rateText = it
-                            it.toDoubleOrNull()?.takeIf { rate -> rate > 0.0 }?.let { rate ->
-                                onSettings(settings.copy(usdToCnyRate = rate))
-                            }
-                        },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = palette.field,
-                            unfocusedContainerColor = palette.field,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            contentColor = palette.text,
-                            placeholderColor = palette.muted
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.width(96.dp)
-                    )
-                }
-            }
-            item {
-                SettingsCard(
-                    Icons.Rounded.CreditCard,
-                    if (settings.language == AppLanguage.Zh) "新建默认值" else "New subscription defaults",
-                    palette,
-                    if (settings.language == AppLanguage.Zh) "减少重复填写" else "Reduce repeated input"
-                ) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Segmented(Currency.entries, settings.defaultCurrency, { currencySymbol(it) }, palette) {
-                            onSettings(settings.copy(defaultCurrency = it))
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Segmented(BillingCycle.entries.filter { it != BillingCycle.Custom }, settings.defaultCycle.takeIf { it != BillingCycle.Custom } ?: BillingCycle.Monthly, { cycleShortLabel(it, settings.language) }, palette) {
-                            onSettings(settings.copy(defaultCycle = it))
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Segmented(SpendingMode.entries, settings.defaultSpendingMode, { modeLabel(it, settings.language) }, palette) {
-                            onSettings(settings.copy(defaultSpendingMode = it))
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = defaultCategoryText,
+                    SettingsRow(
+                        Icons.Rounded.Wallet,
+                        if (settings.language == AppLanguage.Zh) "\u7F8E\u5143\u6C47\u7387" else "USD rate",
+                        palette,
+                        "1 USD = ${settings.usdToCnyRate} CNY"
+                    ) {
+                        CompactNumberField(
+                            value = rateText,
+                            palette = palette,
                             onValueChange = {
-                                defaultCategoryText = it
-                                onSettings(settings.copy(defaultCategory = it.ifBlank { "Other" }))
-                            },
-                            singleLine = true,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = palette.field,
-                                unfocusedContainerColor = palette.field,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                contentColor = palette.text,
-                                placeholderColor = palette.muted
-                            ),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.width(130.dp)
+                                rateText = it
+                                it.toDoubleOrNull()?.takeIf { rate -> rate > 0.0 }?.let { rate ->
+                                    onSettings(settings.copy(usdToCnyRate = rate))
+                                }
+                            }
                         )
                     }
                 }
             }
             item {
-                SettingsCard(
-                    Icons.Rounded.CreditCard,
-                    if (settings.language == AppLanguage.Zh) "\u5BFC\u5165\u5907\u4EFD" else "Import backup",
-                    palette
-                ) {
-                    TextButton(onClick = onImport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u5165" else "Import") }
+                SettingsSection(title = if (settings.language == AppLanguage.Zh) "新建默认值" else "New defaults", palette = palette) {
+                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "货币" else "Currency", palette) {
+                        Segmented(Currency.entries, settings.defaultCurrency, { currencySymbol(it) }, palette) {
+                            onSettings(settings.copy(defaultCurrency = it))
+                        }
+                    }
+                    SettingsRow(Icons.Rounded.CalendarMonth, if (settings.language == AppLanguage.Zh) "周期" else "Cycle", palette) {
+                        Segmented(BillingCycle.entries.filter { it != BillingCycle.Custom }, settings.defaultCycle.takeIf { it != BillingCycle.Custom } ?: BillingCycle.Monthly, { cycleShortLabel(it, settings.language) }, palette) {
+                            onSettings(settings.copy(defaultCycle = it))
+                        }
+                    }
+                    SettingsRow(Icons.Rounded.Wallet, if (settings.language == AppLanguage.Zh) "消费模式" else "Mode", palette) {
+                        Segmented(SpendingMode.entries, settings.defaultSpendingMode, { modeLabel(it, settings.language) }, palette) {
+                            onSettings(settings.copy(defaultSpendingMode = it))
+                        }
+                    }
+                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "分类" else "Category", palette) {
+                        CompactTextField(
+                            value = defaultCategoryText,
+                            palette = palette,
+                            onValueChange = {
+                                defaultCategoryText = it
+                                onSettings(settings.copy(defaultCategory = it.ifBlank { "Other" }))
+                            }
+                        )
+                    }
                 }
             }
             item {
-                SettingsCard(
-                    Icons.Rounded.CreditCard,
-                    if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA\u5907\u4EFD" else "Export backup",
-                    palette
-                ) {
-                    TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") }
+                SettingsSection(title = if (settings.language == AppLanguage.Zh) "数据" else "Data", palette = palette) {
+                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "\u5BFC\u5165\u5907\u4EFD" else "Import backup", palette) {
+                        TextButton(onClick = onImport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u5165" else "Import") }
+                    }
+                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA\u5907\u4EFD" else "Export backup", palette) {
+                        TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") }
+                    }
+                    SettingsRow(Icons.Rounded.CreditCard, "SubRadar v2.0.0.3", palette, copy.about) {}
                 }
-            }
-            item {
-                SettingsCard(Icons.Rounded.CreditCard, "SubRadar v2.0.0.2", palette, copy.about) {}
             }
         }
     }
@@ -2037,6 +2068,91 @@ fun SettingsCard(
         }
         content()
     }
+}
+
+@Composable
+fun SettingsSection(title: String, palette: Palette, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(title, color = palette.muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(palette.card)
+                .padding(vertical = 4.dp)
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun SettingsRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    palette: Palette,
+    subtitle: String? = null,
+    content: @Composable () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = palette.accent, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        Spacer(Modifier.width(12.dp))
+        Box(contentAlignment = Alignment.CenterEnd) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun CompactNumberField(value: String, palette: Palette, onValueChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = palette.field,
+            unfocusedContainerColor = palette.field,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            contentColor = palette.text,
+            placeholderColor = palette.muted
+        ),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.width(96.dp)
+    )
+}
+
+@Composable
+fun CompactTextField(value: String, palette: Palette, onValueChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = palette.field,
+            unfocusedContainerColor = palette.field,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            contentColor = palette.text,
+            placeholderColor = palette.muted
+        ),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.width(130.dp)
+    )
 }
 
 @Composable
