@@ -21,7 +21,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -33,11 +32,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.using
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -60,7 +57,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.animateItem
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -568,7 +564,7 @@ private fun palette(isDark: Boolean) = if (isDark) {
     Palette(Color(0xFFF7F8FA), Color.White, Color(0xFFEEF1F5), Color(0xFF111827), Color(0xFF687385), Color(0xFFE4E8EF), Color(0xFF16A34A), Color(0xFFE8F7EE), Color(0xFFD97706), Color(0xFFDC2626))
 }
 
-@OptIn(ExperimentalAnimationApi::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun MainScreen(
     items: List<Subscription>,
@@ -596,7 +592,6 @@ fun MainScreen(
                 transitionSpec = {
                     (fadeIn(animationSpec = tween(180)) + scaleIn(initialScale = 0.98f))
                         .togetherWith(fadeOut(animationSpec = tween(120)) + scaleOut(targetScale = 0.98f))
-                        .using(SizeTransform(clip = false))
                 },
                 label = "main content"
             ) { state ->
@@ -620,8 +615,7 @@ fun MainScreen(
                                 language = settings.language,
                                 palette = palette,
                                 onOpenEditor = onOpenEditor,
-                                onRenew = onRenew,
-                                modifier = Modifier.animateItem()
+                                onRenew = onRenew
                             )
                         }
                     }
@@ -995,10 +989,15 @@ fun SubscriptionEditor(
                     }
                 }
                 item {
-                    DateButton(copy.nextBillingDate, nextBillingDate, palette) {
-                        pickingDateForStart = false
-                        showDatePicker = true
-                    }
+                    DateButton(
+                        label = copy.nextBillingDate,
+                        value = nextBillingDate,
+                        palette = palette,
+                        onClick = {
+                            pickingDateForStart = false
+                            showDatePicker = true
+                        }
+                    )
                 }
                 item {
                     DateButton(
@@ -1009,7 +1008,7 @@ fun SubscriptionEditor(
                             pickingDateForStart = true
                             showDatePicker = true
                         },
-                        clearText = if (copy === zhCopy) "清除" else "Clear",
+                        clearText = if (copy === zhCopy) "\u6E05\u9664" else "Clear",
                         onClear = if (startDate.isBlank()) null else ({ startDate = "" })
                     )
                 }
