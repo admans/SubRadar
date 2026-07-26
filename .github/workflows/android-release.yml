@@ -28,16 +28,16 @@ jobs:
         with:
           fetch-depth: 0 # Important: Fetch all history for git log
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
 
       # Install Translate Shell for automatic translation
       - name: Install Translate Shell
@@ -114,20 +114,20 @@ jobs:
           }
           
           # 1. Features
-          generate_section "🚀 New Features | 新功能" "^\(feat\|add\|new\|implement\|feature\)"
+          generate_section "New Features | 新功能" "^\(feat\|add\|new\|implement\|feature\)"
           
           # 2. Fixes
-          generate_section "🐛 Bug Fixes | 问题修复" "^\(fix\|bug\|issue\|resolve\|repair\)"
+          generate_section "Bug Fixes | 问题修复" "^\(fix\|bug\|issue\|resolve\|repair\)"
           
           # 3. Improvements
-          generate_section "🛠 Improvements | 改进优化" "^\(update\|refactor\|style\|chore\|perf\|docs\|optimize\)"
+          generate_section "Improvements | 改进优化" "^\(update\|refactor\|style\|chore\|perf\|docs\|optimize\)"
           
           # 4. Others (Catch-all, inverted grep)
           # Note: We skip translation for 'Others' to save time/api calls on minor things, 
           # or you can enable it by copying the logic above. Here we just list them.
           OTHERS=$(git log $LOG_RANGE --pretty=format:"- %s (%h)" --invert-grep --grep="^\(feat\|add\|new\|implement\|feature\|fix\|bug\|issue\|resolve\|repair\|update\|refactor\|style\|chore\|perf\|docs\|optimize\|Release\|Merge\)" -i || true)
           if [ ! -z "$OTHERS" ]; then
-            CONTENT="$CONTENT\n\n### 📋 Other Changes | 其他更改\n$OTHERS"
+            CONTENT="$CONTENT\n\n### Other Changes | 其他更改\n$OTHERS"
           fi
           
           # Handle multiline string for GitHub Actions output
@@ -136,33 +136,20 @@ jobs:
           echo -e "$CONTENT" >> $GITHUB_ENV
           echo "$EOF" >> $GITHUB_ENV
 
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Build Web App
-        run: npm run build
-
-      - name: Initialize Capacitor Android
-        run: |
-          npx cap add android
-          npx cap sync
-
       # 3. Update Android Version
       - name: Update Android Version
         run: |
           CLEAN_VERSION=$(echo "${{ env.VERSION_TAG }}" | sed 's/^v//')
-          sed -i "s/versionName \"1.0\"/versionName \"$CLEAN_VERSION\"/g" android/app/build.gradle
-          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
+          sed -i "s/versionName = \"[^\"]*\"/versionName = \"$CLEAN_VERSION\"/g" app/build.gradle.kts
+          sed -i "s/versionCode = [0-9]*/versionCode = ${{ github.run_number }}/g" app/build.gradle.kts
 
       - name: Build APK (Debug)
-        run: |
-          cd android
-          ./gradlew assembleDebug
+        run: gradle assembleDebug
 
       # 4. Rename APK
       - name: Rename APK
         run: |
-          cd android/app/build/outputs/apk/debug/
+          cd app/build/outputs/apk/debug/
           mv app-debug.apk SubRadar-${{ env.VERSION_TAG }}.apk
 
       # 5. Create Release with Bilingual Body
@@ -172,9 +159,9 @@ jobs:
         with:
           tag_name: ${{ env.VERSION_TAG }}
           name: SubRadar ${{ env.VERSION_TAG }}
-          files: android/app/build/outputs/apk/debug/SubRadar-${{ env.VERSION_TAG }}.apk
+          files: app/build/outputs/apk/debug/SubRadar-${{ env.VERSION_TAG }}.apk
           body: |
-            ## 📱 Android APK Update
+            ## Android APK Update
             
             Version: **${{ env.VERSION_TAG }}**
             
