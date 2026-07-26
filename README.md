@@ -24,7 +24,7 @@ Requirements:
 
 - JDK 17
 - Android SDK
-- Gradle
+- Gradle 9.3.1 or newer
 
 Build a debug APK:
 
