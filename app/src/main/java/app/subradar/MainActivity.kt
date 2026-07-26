@@ -59,6 +59,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -67,8 +68,8 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CreditCard
@@ -1450,12 +1451,37 @@ fun CompactHeader(
                 Text("${totalMonthly(items, settings.language)} ${copy.totalMonthly}", color = palette.muted, fontSize = 12.sp)
             }
             if (attentionCount > 0 || lowBalanceCount > 0) {
-                TextButton(onClick = onShowAttention) {
-                    Text(
-                        if (settings.language == AppLanguage.Zh) "待处理 $attentionCount" else "Attention $attentionCount",
-                        color = palette.warning,
-                        fontWeight = FontWeight.Bold
-                    )
+                val alertCount = attentionCount + lowBalanceCount
+                TextButton(
+                    onClick = onShowAttention,
+                    modifier = Modifier.width(108.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            if (settings.language == AppLanguage.Zh) "待处理" else "Attention",
+                            color = palette.warning,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Box(
+                            Modifier
+                                .height(20.dp)
+                                .widthIn(min = 22.dp, max = 34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(palette.warning.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (alertCount > 99) "99+" else alertCount.toString(),
+                                color = palette.warning,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
                 }
             }
             IconButton(onClick = onOpenSettings) {
@@ -1921,7 +1947,7 @@ fun SettingsScreen(
 
     Column(Modifier.fillMaxSize().background(palette.bg).statusBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, null, tint = palette.text) }
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
             Text(copy.settings, color = palette.text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         }
         LazyColumn(contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -2009,15 +2035,20 @@ fun SettingsScreen(
                             onSettings(settings.copy(defaultCycle = it))
                         }
                     }
-                    SettingsRow(Icons.Rounded.Wallet, if (settings.language == AppLanguage.Zh) "消费模式" else "Mode", palette) {
-                        Segmented(SpendingMode.entries, settings.defaultSpendingMode, { modeLabel(it, settings.language) }, palette) {
-                            onSettings(settings.copy(defaultSpendingMode = it))
+                    SettingsColumnRow(Icons.Rounded.Wallet, if (settings.language == AppLanguage.Zh) "消费模式" else "Mode", palette) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SpendingMode.entries.forEach { mode ->
+                                CycleChip(modeLabel(mode, settings.language), settings.defaultSpendingMode == mode, palette) {
+                                    onSettings(settings.copy(defaultSpendingMode = mode))
+                                }
+                            }
                         }
                     }
-                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "分类" else "Category", palette) {
+                    SettingsColumnRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "分类" else "Category", palette) {
                         CompactTextField(
                             value = defaultCategoryText,
                             palette = palette,
+                            modifier = Modifier.fillMaxWidth(),
                             onValueChange = {
                                 defaultCategoryText = it
                                 onSettings(settings.copy(defaultCategory = it.ifBlank { "Other" }))
@@ -2034,10 +2065,39 @@ fun SettingsScreen(
                     SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA\u5907\u4EFD" else "Export backup", palette) {
                         TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") }
                     }
-                    SettingsRow(Icons.Rounded.CreditCard, "SubRadar v2.0.0.3", palette, copy.about) {}
+                    SettingsRow(Icons.Rounded.CreditCard, "SubRadar v2.0.0.4", palette, copy.about) {}
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SettingsColumnRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    palette: Palette,
+    subtitle: String? = null,
+    content: @Composable () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = palette.accent, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        content()
     }
 }
 
@@ -2137,7 +2197,7 @@ fun CompactNumberField(value: String, palette: Palette, onValueChange: (String) 
 }
 
 @Composable
-fun CompactTextField(value: String, palette: Palette, onValueChange: (String) -> Unit) {
+fun CompactTextField(value: String, palette: Palette, modifier: Modifier = Modifier.width(130.dp), onValueChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -2151,7 +2211,7 @@ fun CompactTextField(value: String, palette: Palette, onValueChange: (String) ->
             placeholderColor = palette.muted
         ),
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.width(130.dp)
+        modifier = modifier
     )
 }
 
@@ -2435,7 +2495,7 @@ fun SubscriptionEditorSheet(
                 if (!initial?.ledger.isNullOrEmpty()) {
                     item {
                         LedgerHistory(
-                            entries = initial?.ledger.orEmpty(),
+                            entries = initial.ledger,
                             currency = currency,
                             language = if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En,
                             palette = palette
