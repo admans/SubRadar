@@ -24,7 +24,7 @@ SubRadar 现在已经改写为 Kotlin 原生 Android 应用。
 
 - JDK 17
 - Android SDK
-- Gradle 9.3.1 或更新版本
+- Gradle 8.11.1 或更新版本
 
 构建调试 APK：
 
