@@ -2,6 +2,7 @@ package app.subradar
 
 import android.Manifest
 import android.app.AlarmManager
+import android.app.DatePickerDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -32,6 +33,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.Image
@@ -52,6 +54,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -60,6 +63,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -77,27 +81,11 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Wallet
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material.Icon
+import androidx.compose.material.LocalContentColor
+import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -109,10 +97,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -125,7 +115,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.io.File
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -133,6 +122,7 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 import kotlin.math.abs
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 private const val SUBS_KEY = "subradar_subscriptions"
 private const val SETTINGS_KEY = "subradar_settings"
@@ -500,7 +490,6 @@ fun NativeSubRadar() {
     val context = LocalContext.current
     val store = remember { SubRadarStore(context) }
     val scope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
     var settings by remember { mutableStateOf(store.loadSettings()) }
     val copy = if (settings.language == AppLanguage.Zh) zhCopy else enCopy
     val isDark = when (settings.theme) {
@@ -514,6 +503,7 @@ fun NativeSubRadar() {
     var showSettings by remember { mutableStateOf(false) }
     var displayMode by remember { mutableStateOf(DisplayMode.List) }
     var categoryFilter by remember { mutableStateOf<String?>(null) }
+    var pendingUndo by remember { mutableStateOf<Pair<Int, Subscription>?>(null) }
     val subscriptions = remember { mutableStateListOf<Subscription>() }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri ?: return@rememberLauncherForActivityResult
@@ -614,59 +604,58 @@ fun NativeSubRadar() {
                     )
                 }
 
-                AnimatedVisibility(
+                SubscriptionEditorOverlay(
                     visible = isCreating || editorItem != null,
-                    enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
-                    exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
-                ) {
-                    SubscriptionEditor(
-                        initial = editorItem,
-                        copy = copy,
-                        palette = palette,
-                        onDismiss = { isCreating = false; editorItem = null },
-                        onDelete = { item ->
+                    initial = editorItem,
+                    copy = copy,
+                    palette = palette,
+                    onDismiss = { isCreating = false; editorItem = null },
+                    onDelete = { item ->
+                        val index = subscriptions.indexOfFirst { it.id == item.id }
+                        subscriptions.removeAll { it.id == item.id }
+                        store.saveSubscriptions(subscriptions)
+                        cancelReminder(context, item)
+                        isCreating = false
+                        editorItem = null
+                        pendingUndo = index.coerceAtLeast(0) to item
+                        scope.launch {
+                            delay(4200)
+                            if (pendingUndo?.second?.id == item.id) pendingUndo = null
+                        }
+                    },
+                    onSave = { item ->
+                        if (subscriptions.any { it.id == item.id }) {
                             val index = subscriptions.indexOfFirst { it.id == item.id }
-                            subscriptions.removeAll { it.id == item.id }
-                            store.saveSubscriptions(subscriptions)
-                            cancelReminder(context, item)
-                            isCreating = false
-                            editorItem = null
-                            scope.launch {
-                                val undoText = if (settings.language == AppLanguage.Zh) "\u64A4\u9500" else "Undo"
-                                val deletedText = if (settings.language == AppLanguage.Zh) "\u5DF2\u5220\u9664" else "Deleted"
-                                val result = snackbarHostState.showSnackbar(
-                                    message = deletedText,
-                                    actionLabel = undoText,
-                                    duration = SnackbarDuration.Short
-                                )
-                                if (result == SnackbarResult.ActionPerformed) {
-                                    subscriptions.add(index.coerceIn(0, subscriptions.size), item)
-                                    store.saveSubscriptions(subscriptions)
-                                    if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
-                                }
-                            }
-                        },
-                        onSave = { item ->
-                            if (subscriptions.any { it.id == item.id }) {
-                                val index = subscriptions.indexOfFirst { it.id == item.id }
-                                if (index >= 0) subscriptions[index] = item
-                            } else {
-                                subscriptions.add(item)
-                            }
-                            val renewed = autoRenew(subscriptions)
-                            subscriptions.clear()
-                            subscriptions.addAll(renewed)
+                            if (index >= 0) subscriptions[index] = item
+                        } else {
+                            subscriptions.add(item)
+                        }
+                        val renewed = autoRenew(subscriptions)
+                        subscriptions.clear()
+                        subscriptions.addAll(renewed)
+                        store.saveSubscriptions(subscriptions)
+                        if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
+                        isCreating = false
+                        editorItem = null
+                    }
+                )
+                pendingUndo?.let { (index, item) ->
+                    MiuixSnackbar(
+                        message = if (settings.language == AppLanguage.Zh) "\u5DF2\u5220\u9664" else "Deleted",
+                        action = if (settings.language == AppLanguage.Zh) "\u64A4\u9500" else "Undo",
+                        palette = palette,
+                        onAction = {
+                            subscriptions.add(index.coerceIn(0, subscriptions.size), item)
                             store.saveSubscriptions(subscriptions)
                             if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
-                            isCreating = false
-                            editorItem = null
-                        }
+                            pendingUndo = null
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(16.dp)
                     )
                 }
-                SnackbarHost(
-                    hostState = snackbarHostState,
-                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
-                )
             }
         }
     }
@@ -689,6 +678,279 @@ private fun palette(isDark: Boolean) = if (isDark) {
     Palette(Color(0xFF0B0F14), Color(0xFF161B22), Color(0xFF202630), Color(0xFFF2F4F8), Color(0xFF9AA4B2), Color(0xFF2B3340), Color(0xFF4ADE80), Color(0xFF163B27), Color(0xFFF59E0B), Color(0xFFEF4444))
 } else {
     Palette(Color(0xFFF7F8FA), Color.White, Color(0xFFEEF1F5), Color(0xFF111827), Color(0xFF687385), Color(0xFFE4E8EF), Color(0xFF16A34A), Color(0xFFE8F7EE), Color(0xFFD97706), Color(0xFFDC2626))
+}
+
+data class MiuixButtonColors(val containerColor: Color, val contentColor: Color)
+data class MiuixTextFieldColors(
+    val focusedContainerColor: Color,
+    val unfocusedContainerColor: Color,
+    val contentColor: Color,
+    val placeholderColor: Color
+)
+
+object ButtonDefaults {
+    fun buttonColors(containerColor: Color, contentColor: Color): MiuixButtonColors {
+        return MiuixButtonColors(containerColor, contentColor)
+    }
+}
+
+object TextFieldDefaults {
+    fun colors(
+        focusedContainerColor: Color,
+        unfocusedContainerColor: Color,
+        focusedIndicatorColor: Color = Color.Transparent,
+        unfocusedIndicatorColor: Color = Color.Transparent,
+        contentColor: Color = Color(0xFF111827),
+        placeholderColor: Color = Color(0xFF687385)
+    ): MiuixTextFieldColors {
+        return MiuixTextFieldColors(focusedContainerColor, unfocusedContainerColor, contentColor, placeholderColor)
+    }
+}
+
+@Composable
+fun Surface(color: Color, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Box(modifier.background(color)) { content() }
+}
+
+@Composable
+fun IconButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Box(
+        modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
+@Composable
+fun TextButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
+@Composable
+fun Button(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    colors: MiuixButtonColors = MiuixButtonColors(Color(0xFF16A34A), Color.White),
+    content: @Composable () -> Unit
+) {
+    val background by animateColorAsState(
+        targetValue = if (enabled) colors.containerColor else colors.containerColor.copy(alpha = 0.38f),
+        label = "button background"
+    )
+    val contentColor = if (enabled) colors.contentColor else colors.contentColor.copy(alpha = 0.58f)
+    Box(
+        modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(background)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        CompositionLocalProvider(LocalContentColor provides contentColor) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+fun FloatingActionButton(
+    onClick: () -> Unit,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier
+            .size(64.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(containerColor)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        CompositionLocalProvider(LocalContentColor provides contentColor) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun Switch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val background by animateColorAsState(
+        targetValue = if (checked) Color(0xFF16A34A) else Color(0xFFCBD5E1),
+        label = "switch background"
+    )
+    val knobOffset by animateDpAsState(
+        targetValue = if (checked) 22.dp else 0.dp,
+        animationSpec = tween(180),
+        label = "switch knob"
+    )
+    Box(
+        Modifier
+            .width(52.dp)
+            .height(30.dp)
+            .clip(CircleShape)
+            .background(background)
+            .clickable { onCheckedChange(!checked) }
+            .padding(3.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Box(
+            Modifier
+                .offset(x = knobOffset)
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(Color.White)
+        )
+    }
+}
+
+@Composable
+fun OutlinedTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: (@Composable () -> Unit)? = null,
+    placeholder: (@Composable () -> Unit)? = null,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    singleLine: Boolean = false,
+    minLines: Int = 1,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    colors: MiuixTextFieldColors = MiuixTextFieldColors(Color(0xFFEEF1F5), Color(0xFFEEF1F5), Color(0xFF111827), Color(0xFF687385)),
+    shape: RoundedCornerShape = RoundedCornerShape(18.dp)
+) {
+    Column(modifier) {
+        label?.let {
+            Box(Modifier.padding(start = 4.dp, bottom = 6.dp)) { it() }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(colors.unfocusedContainerColor)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            leadingIcon?.let {
+                it()
+                Spacer(Modifier.width(8.dp))
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = singleLine,
+                minLines = minLines,
+                keyboardOptions = keyboardOptions,
+                textStyle = TextStyle(color = colors.contentColor, fontSize = 16.sp),
+                cursorBrush = SolidColor(Color(0xFF16A34A)),
+                modifier = Modifier.weight(1f),
+                decorationBox = { inner ->
+                    if (value.isEmpty() && placeholder != null) {
+                        CompositionLocalProvider(LocalContentColor provides colors.placeholderColor) {
+                            Box { placeholder() }
+                        }
+                    }
+                    inner()
+                }
+            )
+            trailingIcon?.let {
+                Spacer(Modifier.width(8.dp))
+                it()
+            }
+        }
+    }
+}
+
+@Composable
+fun MiuixConfirmDialog(
+    title: String,
+    message: String,
+    confirm: String,
+    cancel: String,
+    palette: Palette,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.36f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier
+                .padding(24.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(palette.card)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {}
+                .padding(22.dp)
+        ) {
+            Text(title, color = palette.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Text(message, color = palette.muted)
+            Spacer(Modifier.height(18.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) {
+                    Text(cancel, color = palette.muted, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onConfirm) {
+                    Text(confirm, color = palette.danger, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MiuixSnackbar(
+    message: String,
+    action: String,
+    palette: Palette,
+    onAction: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(palette.text)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(message, color = palette.bg, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.width(18.dp))
+        Text(
+            action,
+            color = palette.accent,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable(onClick = onAction)
+        )
+    }
 }
 
 @OptIn(ExperimentalAnimationApi::class)
@@ -959,7 +1221,9 @@ fun Header(
                 focusedContainerColor = palette.field,
                 unfocusedContainerColor = palette.field,
                 focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent
+                unfocusedIndicatorColor = Color.Transparent,
+                contentColor = palette.text,
+                placeholderColor = palette.muted
             ),
             modifier = Modifier.fillMaxWidth()
         )
@@ -1169,7 +1433,9 @@ fun SettingsScreen(
                             focusedContainerColor = palette.field,
                             unfocusedContainerColor = palette.field,
                             focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent
+                            unfocusedIndicatorColor = Color.Transparent,
+                            contentColor = palette.text,
+                            placeholderColor = palette.muted
                         ),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.width(96.dp)
@@ -1195,7 +1461,7 @@ fun SettingsScreen(
                 }
             }
             item {
-                SettingsCard(Icons.Rounded.CreditCard, "SubRadar v2.0.0.0", palette, copy.about) {}
+                SettingsCard(Icons.Rounded.CreditCard, "SubRadar v2.0.0.1", palette, copy.about) {}
             }
         }
     }
@@ -1253,9 +1519,60 @@ fun <T> Segmented(values: List<T>, current: T, label: (T) -> String, palette: Pa
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SubscriptionEditor(
+fun SubscriptionEditorOverlay(
+    visible: Boolean,
+    initial: Subscription?,
+    copy: Copy,
+    palette: Palette,
+    onDismiss: () -> Unit,
+    onDelete: (Subscription) -> Unit,
+    onSave: (Subscription) -> Unit
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(animationSpec = tween(160)),
+            exit = fadeOut(animationSpec = tween(120))
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.34f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss
+                    )
+            )
+        }
+        AnimatedVisibility(
+            visible = visible,
+            enter = slideInVertically(
+                animationSpec = tween(240),
+                initialOffsetY = { it / 2 }
+            ) + fadeIn(animationSpec = tween(120)),
+            exit = slideOutVertically(
+                animationSpec = tween(180),
+                targetOffsetY = { it / 2 }
+            ) + fadeOut(animationSpec = tween(100))
+        ) {
+            SubscriptionEditorSheet(
+                initial = initial,
+                copy = copy,
+                palette = palette,
+                onDismiss = onDismiss,
+                onDelete = onDelete,
+                onSave = onSave
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SubscriptionEditorSheet(
     initial: Subscription?,
     copy: Copy,
     palette: Palette,
@@ -1291,28 +1608,45 @@ fun SubscriptionEditor(
         imageUri = uri?.let { persistImage(context, it) }
     }
 
-    Box(
+    Column(
         Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.32f))
-            .clickable { onDismiss() },
-        contentAlignment = Alignment.BottomCenter
+            .fillMaxWidth()
+            .heightIn(max = sheetMaxHeight)
+            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .background(palette.card)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {}
+            .navigationBarsPadding()
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(max = sheetMaxHeight)
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                .background(palette.card)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {}
-                .navigationBarsPadding()
-        ) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp, bottom = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    Modifier
+                        .size(width = 38.dp, height = 4.dp)
+                        .clip(CircleShape)
+                        .background(palette.muted.copy(alpha = 0.28f))
+                )
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, null, tint = palette.text) }
-                Text(if (initial == null) copy.newSub else copy.editSub, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                Text(
+                    if (initial == null) copy.newSub else copy.editSub,
+                    color = palette.text,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    modifier = Modifier.weight(1f)
+                )
                 if (initial != null) IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Rounded.Delete, null, tint = palette.danger) }
             }
             LazyColumn(
@@ -1449,35 +1783,38 @@ fun SubscriptionEditor(
                 }
             }
         }
-    }
 
     if (showDatePicker) {
-        val current = runCatching {
-            LocalDate.parse(if (pickingDateForStart) startDate.ifBlank { LocalDate.now().toString() } else nextBillingDate)
-                .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        }.getOrDefault(System.currentTimeMillis())
-        val state = rememberDatePickerState(initialSelectedDateMillis = current)
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    val selected = state.selectedDateMillis ?: System.currentTimeMillis()
-                    val date = Instant.ofEpochMilli(selected).atZone(ZoneId.systemDefault()).toLocalDate().toString()
+        LaunchedEffect(showDatePicker, pickingDateForStart) {
+            val initialDate = parseDate(
+                if (pickingDateForStart) startDate.ifBlank { LocalDate.now().toString() } else nextBillingDate
+            ) ?: LocalDate.now()
+            DatePickerDialog(
+                context,
+                { _, year, month, day ->
+                    val date = LocalDate.of(year, month + 1, day).toString()
                     if (pickingDateForStart) startDate = date else nextBillingDate = date
                     showDatePicker = false
-                }) { Text(copy.confirm) }
-            },
-            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text(copy.cancel) } }
-        ) { DatePicker(state = state) }
+                },
+                initialDate.year,
+                initialDate.monthValue - 1,
+                initialDate.dayOfMonth
+            ).apply {
+                setOnCancelListener { showDatePicker = false }
+                setOnDismissListener { showDatePicker = false }
+            }.show()
+        }
     }
 
     if (confirmDelete && initial != null) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text(copy.delete) },
-            text = { Text(copy.confirmDelete) },
-            confirmButton = { TextButton(onClick = { onDelete(initial) }) { Text(copy.confirm) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(copy.cancel) } }
+        MiuixConfirmDialog(
+            title = copy.delete,
+            message = copy.confirmDelete,
+            confirm = copy.confirm,
+            cancel = copy.cancel,
+            palette = palette,
+            onConfirm = { onDelete(initial) },
+            onDismiss = { confirmDelete = false }
         )
     }
 }
@@ -1502,7 +1839,9 @@ fun Field(
             focusedContainerColor = palette.field,
             unfocusedContainerColor = palette.field,
             focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent
+            unfocusedIndicatorColor = Color.Transparent,
+            contentColor = palette.text,
+            placeholderColor = palette.muted
         ),
         shape = RoundedCornerShape(18.dp),
         modifier = modifier
