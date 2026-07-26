@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "app.subradar"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "app.subradar"
