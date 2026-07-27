@@ -2199,7 +2199,7 @@ fun SettingsScreen(
                     SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA\u5907\u4EFD" else "Export backup", palette) {
                         TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") }
                     }
-                    SettingsRow(Icons.Rounded.CreditCard, "SubRadar v2.0.0.4", palette, copy.about) {}
+                    SettingsRow(Icons.Rounded.CreditCard, "SubRadar v2.0.0.5", palette, copy.about) {}
                 }
             }
         }
@@ -2231,7 +2231,7 @@ fun NewSettingsScreen(
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
             Column(Modifier.weight(1f)) {
                 Text(copy.settings, color = palette.text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("SubRadar v2.0.0.4", color = palette.muted, fontSize = 12.sp)
+                Text("SubRadar v2.0.0.5", color = palette.muted, fontSize = 12.sp)
             }
         }
         LazyColumn(contentPadding = PaddingValues(16.dp, 6.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
