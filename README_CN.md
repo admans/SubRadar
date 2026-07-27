@@ -40,7 +40,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## 发布
 
-GitHub Actions 会直接构建原生 Android 项目。推送 `v2.0.0.5` 这样的标签，或手动运行工作流即可。
+GitHub Actions 会直接构建原生 Android 项目。推送 `v2.0.0.6` 这样的标签，或手动运行工作流即可。
 
 ## 技术栈
 
