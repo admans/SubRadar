@@ -36,7 +36,9 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -82,7 +84,6 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Wallet
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.runtime.Composable
@@ -102,11 +103,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
@@ -972,9 +976,9 @@ data class Palette(
 )
 
 private fun palette(isDark: Boolean) = if (isDark) {
-    Palette(Color(0xFF0B0F14), Color(0xFF161B22), Color(0xFF202630), Color(0xFFF2F4F8), Color(0xFF9AA4B2), Color(0xFF2B3340), Color(0xFF4ADE80), Color(0xFF163B27), Color(0xFFF59E0B), Color(0xFFEF4444))
+    Palette(Color(0xFF0B0F14), Color(0xFF161B22), Color(0xFF202630), Color(0xFFF2F4F8), Color(0xFF9AA4B2), Color(0xFF2B3340), Color(0xFF5FB3A4), Color(0xFF143A35), Color(0xFFF59E0B), Color(0xFFEF4444))
 } else {
-    Palette(Color(0xFFF7F8FA), Color.White, Color(0xFFEEF1F5), Color(0xFF111827), Color(0xFF687385), Color(0xFFE4E8EF), Color(0xFF16A34A), Color(0xFFE8F7EE), Color(0xFFD97706), Color(0xFFDC2626))
+    Palette(Color(0xFFF7F8FA), Color.White, Color(0xFFEEF1F5), Color(0xFF111827), Color(0xFF687385), Color(0xFFE4E8EF), Color(0xFF2F7D6D), Color(0xFFE6F0EE), Color(0xFFD97706), Color(0xFFDC2626))
 }
 
 data class MiuixButtonColors(val containerColor: Color, val contentColor: Color)
@@ -1082,7 +1086,7 @@ fun Button(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    colors: MiuixButtonColors = MiuixButtonColors(Color(0xFF16A34A), Color.White),
+    colors: MiuixButtonColors = MiuixButtonColors(Color(0xFF2F7D6D), Color.White),
     content: @Composable () -> Unit
 ) {
     val background by animateColorAsState(
@@ -1107,31 +1111,9 @@ fun Button(
 }
 
 @Composable
-fun FloatingActionButton(
-    onClick: () -> Unit,
-    containerColor: Color,
-    contentColor: Color,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
-) {
-    Box(
-        modifier
-            .size(64.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(containerColor)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        CompositionLocalProvider(LocalContentColor provides contentColor) {
-            content()
-        }
-    }
-}
-
-@Composable
 fun Switch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val background by animateColorAsState(
-        targetValue = if (checked) Color(0xFF16A34A) else Color(0xFFCBD5E1),
+        targetValue = if (checked) Color(0xFF2F7D6D) else Color(0xFFCBD5E1),
         label = "switch background"
     )
     val knobOffset by animateDpAsState(
@@ -1197,7 +1179,7 @@ fun OutlinedTextField(
                 minLines = minLines,
                 keyboardOptions = keyboardOptions,
                 textStyle = TextStyle(color = colors.contentColor, fontSize = 16.sp),
-                cursorBrush = SolidColor(Color(0xFF16A34A)),
+                cursorBrush = SolidColor(Color(0xFF2F7D6D)),
                 modifier = Modifier.weight(1f),
                 decorationBox = { inner ->
                     if (value.isEmpty() && placeholder != null) {
@@ -1328,6 +1310,23 @@ fun MainScreen(
         displayMode == DisplayMode.Stats -> HomeTab.Stats
         else -> HomeTab.List
     }
+    val selectHomeTab: (HomeTab) -> Unit = { tab ->
+        when (tab) {
+            HomeTab.List -> {
+                onDisplayModeChange(DisplayMode.List)
+                if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
+            }
+            HomeTab.Stats -> {
+                onDisplayModeChange(DisplayMode.Stats)
+                if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
+            }
+            HomeTab.Attention -> {
+                onDisplayModeChange(DisplayMode.List)
+                onSmartFilterChange(SmartFilter.Attention)
+            }
+        }
+    }
+    val swipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     Box(Modifier.fillMaxSize().background(palette.bg)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             CompactHeader(
@@ -1384,6 +1383,23 @@ fun MainScreen(
                     (slideInHorizontally(animationSpec = tween(220), initialOffsetX = enterOffset) + fadeIn(animationSpec = tween(180)))
                         .togetherWith(slideOutHorizontally(animationSpec = tween(200), targetOffsetX = exitOffset) + fadeOut(animationSpec = tween(140)))
                 },
+                modifier = Modifier
+                    .weight(1f)
+                    .pointerInput(activeTab) {
+                        var dragAmount = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragAmount = 0f },
+                            onHorizontalDrag = { _, dragDelta -> dragAmount += dragDelta },
+                            onDragEnd = {
+                                when {
+                                    dragAmount <= -swipeThresholdPx -> nextHomeTab(activeTab)?.let(selectHomeTab)
+                                    dragAmount >= swipeThresholdPx -> previousHomeTab(activeTab)?.let(selectHomeTab)
+                                }
+                                dragAmount = 0f
+                            },
+                            onDragCancel = { dragAmount = 0f }
+                        )
+                    },
                 label = "main content"
             ) { state ->
                 val tab = state.substringBefore(":")
@@ -1425,22 +1441,7 @@ fun MainScreen(
                 attentionCount = attentionItems.size + lowBalanceCount,
                 settings = settings,
                 palette = palette,
-                onSelectTab = { tab ->
-                    when (tab) {
-                        HomeTab.List -> {
-                            onDisplayModeChange(DisplayMode.List)
-                            if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
-                        }
-                        HomeTab.Stats -> {
-                            onDisplayModeChange(DisplayMode.Stats)
-                            if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
-                        }
-                        HomeTab.Attention -> {
-                            onDisplayModeChange(DisplayMode.List)
-                            onSmartFilterChange(SmartFilter.Attention)
-                        }
-                    }
-                },
+                onSelectTab = selectHomeTab,
                 modifier = Modifier.weight(1f)
             )
             FloatingCreateButton(onCreate, palette)
@@ -1455,6 +1456,18 @@ private fun tabOrder(state: String): Int {
         HomeTab.Attention.name -> 2
         else -> 0
     }
+}
+
+private val homeTabSequence = listOf(HomeTab.List, HomeTab.Stats, HomeTab.Attention)
+
+private fun nextHomeTab(tab: HomeTab): HomeTab? {
+    val index = homeTabSequence.indexOf(tab)
+    return homeTabSequence.getOrNull(index + 1)
+}
+
+private fun previousHomeTab(tab: HomeTab): HomeTab? {
+    val index = homeTabSequence.indexOf(tab)
+    return homeTabSequence.getOrNull(index - 1)
 }
 
 @Composable
@@ -1568,24 +1581,19 @@ fun FloatingNavItem(
         animationSpec = tween(180),
         label = "floating nav icon size"
     )
-    val selectedBubbleWidth by animateDpAsState(
-        targetValue = if (selected) 118.dp else 0.dp,
-        animationSpec = tween(220),
-        label = "floating nav selected bubble width"
-    )
-    val selectedBubbleHeight by animateDpAsState(
-        targetValue = if (selected) 40.dp else 0.dp,
-        animationSpec = tween(220),
-        label = "floating nav selected bubble height"
+    val selectedBubbleScale by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.08f,
+        animationSpec = tween(240),
+        label = "floating nav selected bubble scale"
     )
     val selectedBubbleColor by animateColorAsState(
-        targetValue = if (selected) palette.accentSoft.copy(alpha = 0.72f) else palette.accentSoft.copy(alpha = 0f),
+        targetValue = if (selected) palette.accentSoft.copy(alpha = 0.82f) else palette.accentSoft.copy(alpha = 0f),
         animationSpec = tween(220),
         label = "floating nav selected bubble color"
     )
     Column(
         modifier
-            .height(44.dp)
+            .height(48.dp)
             .clip(RoundedCornerShape(16.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -1596,8 +1604,14 @@ fun FloatingNavItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Box(Modifier.width(selectedBubbleWidth).height(selectedBubbleHeight).clip(CircleShape).background(selectedBubbleColor))
+        Box(Modifier.fillMaxWidth().height(42.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .fillMaxWidth(selectedBubbleScale)
+                    .height(40.dp)
+                    .clip(CircleShape)
+                    .background(selectedBubbleColor)
+            )
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Box(Modifier.offset(y = iconOffset), contentAlignment = Alignment.Center) {
                     Icon(icon, null, tint = contentColor, modifier = Modifier.size(iconSize))
@@ -1692,61 +1706,6 @@ fun HomeSearchField(
             ),
             modifier = Modifier.fillMaxWidth().heightIn(max = 50.dp)
         )
-    }
-}
-
-@Composable
-fun AttentionCenter(
-    items: List<Subscription>,
-    lowBalanceCount: Int,
-    duplicateCount: Int,
-    settings: AppSettings,
-    palette: Palette,
-    onShowAttention: () -> Unit,
-    onShowLowBalance: () -> Unit
-) {
-    val language = settings.language
-    val dueCount = items.count { isDueOrOverdue(it) }
-    if (items.isEmpty() && lowBalanceCount == 0) return
-
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        QuickSignalCard(
-            title = if (language == AppLanguage.Zh) "待处理" else "Attention",
-            value = items.size.toString(),
-            subtitle = if (language == AppLanguage.Zh) "到期 $dueCount · 重复 $duplicateCount" else "Due $dueCount · dupes $duplicateCount",
-            palette = palette,
-            modifier = Modifier.weight(1f),
-            onClick = onShowAttention
-        )
-        QuickSignalCard(
-            title = if (language == AppLanguage.Zh) "余额不足" else "Low balance",
-            value = lowBalanceCount.toString(),
-            subtitle = if (language == AppLanguage.Zh) "需要充值或调整" else "Needs top-up",
-            palette = palette,
-            modifier = Modifier.weight(1f),
-            onClick = onShowLowBalance
-        )
-    }
-}
-
-@Composable
-fun QuickSignalCard(title: String, value: String, subtitle: String, palette: Palette, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(palette.card)
-            .clickable(onClick = onClick)
-            .padding(14.dp)
-    ) {
-        Text(title, color = palette.muted, fontSize = 12.sp)
-        Spacer(Modifier.height(4.dp))
-        Text(value, color = palette.text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Text(subtitle, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -2060,153 +2019,6 @@ fun SubscriptionRow(
 }
 
 @Composable
-fun SettingsScreen(
-    settings: AppSettings,
-    copy: Copy,
-    palette: Palette,
-    onBack: () -> Unit,
-    onExport: () -> Unit,
-    onImport: () -> Unit,
-    onSettings: (AppSettings) -> Unit
-) {
-    val context = LocalContext.current
-    var rateText by remember(settings.usdToCnyRate) { mutableStateOf(settings.usdToCnyRate.toString()) }
-    var defaultCategoryText by remember(settings.defaultCategory) { mutableStateOf(settings.defaultCategory) }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        onSettings(settings.copy(notificationsEnabled = granted))
-        if (!granted && Build.VERSION.SDK_INT >= 33) {
-            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
-        }
-    }
-
-    Column(Modifier.fillMaxSize().background(palette.bg).statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
-            Text(copy.settings, color = palette.text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        }
-        LazyColumn(contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            item {
-                SettingsSection(title = if (settings.language == AppLanguage.Zh) "偏好" else "Preferences", palette = palette) {
-                    SettingsRow(Icons.Rounded.Palette, copy.appearance, palette) {
-                        Segmented(AppThemeMode.entries, settings.theme, { themeLabel(it, settings.language) }, palette) {
-                            onSettings(settings.copy(theme = it))
-                        }
-                    }
-                    SettingsRow(Icons.Rounded.Translate, copy.language, palette) {
-                        Segmented(AppLanguage.entries, settings.language, { if (it == AppLanguage.Zh) "中文" else "EN" }, palette) {
-                            onSettings(settings.copy(language = it))
-                        }
-                    }
-                }
-            }
-            item {
-                SettingsSection(title = if (settings.language == AppLanguage.Zh) "提醒" else "Reminders", palette = palette) {
-                    SettingsRow(Icons.Rounded.Notifications, copy.notifications, palette, copy.notificationsDesc) {
-                        Switch(
-                            checked = settings.notificationsEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled && Build.VERSION.SDK_INT >= 33 &&
-                                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    onSettings(settings.copy(notificationsEnabled = enabled))
-                                }
-                            }
-                        )
-                    }
-                    SettingsRow(
-                        Icons.Rounded.CalendarMonth,
-                        if (settings.language == AppLanguage.Zh) "\u63D0\u524D\u63D0\u9192" else "Lead time",
-                        palette,
-                        if (settings.language == AppLanguage.Zh) "\u5230\u671F\u524D\u591A\u5C11\u5929" else "Days before renewal"
-                    ) {
-                        Segmented(listOf(0, 1, 3, 7), settings.reminderDaysBefore, { it.toString() }, palette) {
-                            onSettings(settings.copy(reminderDaysBefore = it))
-                        }
-                    }
-                }
-            }
-            item {
-                SettingsSection(title = if (settings.language == AppLanguage.Zh) "货币" else "Currency", palette = palette) {
-                    SettingsRow(
-                        Icons.Rounded.Wallet,
-                        if (settings.language == AppLanguage.Zh) "\u4E3B\u8981\u8D27\u5E01" else "Primary currency",
-                        palette
-                    ) {
-                        Segmented(Currency.entries, settings.primaryCurrency, { currencySymbol(it) }, palette) {
-                            onSettings(settings.copy(primaryCurrency = it))
-                        }
-                    }
-                    SettingsRow(
-                        Icons.Rounded.Wallet,
-                        if (settings.language == AppLanguage.Zh) "\u7F8E\u5143\u6C47\u7387" else "USD rate",
-                        palette,
-                        "1 USD = ${settings.usdToCnyRate} CNY"
-                    ) {
-                        CompactNumberField(
-                            value = rateText,
-                            palette = palette,
-                            onValueChange = {
-                                rateText = it
-                                it.toDoubleOrNull()?.takeIf { rate -> rate > 0.0 }?.let { rate ->
-                                    onSettings(settings.copy(usdToCnyRate = rate))
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-            item {
-                SettingsSection(title = if (settings.language == AppLanguage.Zh) "新建默认值" else "New defaults", palette = palette) {
-                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "货币" else "Currency", palette) {
-                        Segmented(Currency.entries, settings.defaultCurrency, { currencySymbol(it) }, palette) {
-                            onSettings(settings.copy(defaultCurrency = it))
-                        }
-                    }
-                    SettingsRow(Icons.Rounded.CalendarMonth, if (settings.language == AppLanguage.Zh) "周期" else "Cycle", palette) {
-                        Segmented(BillingCycle.entries.filter { it != BillingCycle.Custom }, settings.defaultCycle.takeIf { it != BillingCycle.Custom } ?: BillingCycle.Monthly, { cycleShortLabel(it, settings.language) }, palette) {
-                            onSettings(settings.copy(defaultCycle = it))
-                        }
-                    }
-                    SettingsColumnRow(Icons.Rounded.Wallet, if (settings.language == AppLanguage.Zh) "消费模式" else "Mode", palette) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SpendingMode.entries.forEach { mode ->
-                                CycleChip(modeLabel(mode, settings.language), settings.defaultSpendingMode == mode, palette) {
-                                    onSettings(settings.copy(defaultSpendingMode = mode))
-                                }
-                            }
-                        }
-                    }
-                    SettingsColumnRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "分类" else "Category", palette) {
-                        CompactTextField(
-                            value = defaultCategoryText,
-                            palette = palette,
-                            modifier = Modifier.fillMaxWidth(),
-                            onValueChange = {
-                                defaultCategoryText = it
-                                onSettings(settings.copy(defaultCategory = it.ifBlank { "Other" }))
-                            }
-                        )
-                    }
-                }
-            }
-            item {
-                SettingsSection(title = if (settings.language == AppLanguage.Zh) "数据" else "Data", palette = palette) {
-                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "\u5BFC\u5165\u5907\u4EFD" else "Import backup", palette) {
-                        TextButton(onClick = onImport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u5165" else "Import") }
-                    }
-                    SettingsRow(Icons.Rounded.CreditCard, if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA\u5907\u4EFD" else "Export backup", palette) {
-                        TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") }
-                    }
-                    SettingsRow(Icons.Rounded.CreditCard, "SubRadar v2.0.0.5", palette, copy.about) {}
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun NewSettingsScreen(
     settings: AppSettings,
     copy: Copy,
@@ -2219,6 +2031,8 @@ fun NewSettingsScreen(
     val context = LocalContext.current
     var rateText by remember(settings.usdToCnyRate) { mutableStateOf(settings.usdToCnyRate.toString()) }
     var defaultCategoryText by remember(settings.defaultCategory) { mutableStateOf(settings.defaultCategory) }
+    val edgeSwipeStartPx = with(LocalDensity.current) { 48.dp.toPx() }
+    val backSwipeThresholdPx = with(LocalDensity.current) { 96.dp.toPx() }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         onSettings(settings.copy(notificationsEnabled = granted))
         if (!granted && Build.VERSION.SDK_INT >= 33) {
@@ -2226,12 +2040,39 @@ fun NewSettingsScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().background(palette.bg).statusBarsPadding()) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(palette.bg)
+            .pointerInput(Unit) {
+                var startedFromEdge = false
+                var dragAmount = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        startedFromEdge = offset.x <= edgeSwipeStartPx
+                        dragAmount = 0f
+                    },
+                    onHorizontalDrag = { _, dragDelta ->
+                        if (startedFromEdge) dragAmount += dragDelta
+                    },
+                    onDragEnd = {
+                        if (startedFromEdge && dragAmount >= backSwipeThresholdPx) onBack()
+                        startedFromEdge = false
+                        dragAmount = 0f
+                    },
+                    onDragCancel = {
+                        startedFromEdge = false
+                        dragAmount = 0f
+                    }
+                )
+            }
+            .statusBarsPadding()
+    ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
             Column(Modifier.weight(1f)) {
                 Text(copy.settings, color = palette.text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("SubRadar v2.0.0.5", color = palette.muted, fontSize = 12.sp)
+                Text("SubRadar v2.0.0.6", color = palette.muted, fontSize = 12.sp)
             }
         }
         LazyColumn(contentPadding = PaddingValues(16.dp, 6.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -2354,8 +2195,7 @@ fun NewSettingsScreen(
                     SettingsOptionRow(
                         title = if (settings.language == AppLanguage.Zh) "\u5206\u7C7B" else "Category",
                         subtitle = if (settings.language == AppLanguage.Zh) "\u65B0\u8BA2\u9605\u7684\u9ED8\u8BA4\u5206\u7C7B" else "Default category for new items",
-                        palette = palette,
-                        alignTop = true
+                        palette = palette
                     ) {
                         CompactTextField(
                             value = defaultCategoryText,
@@ -2458,7 +2298,6 @@ fun SettingsOptionRow(
     title: String,
     subtitle: String?,
     palette: Palette,
-    alignTop: Boolean = false,
     content: @Composable () -> Unit
 ) {
     Column(Modifier.fillMaxWidth().animateContentSize()) {
@@ -2493,134 +2332,10 @@ fun SettingsSwitchRow(
 }
 
 @Composable
-fun LegacySettingsOptionRow(
-    title: String,
-    subtitle: String?,
-    palette: Palette,
-    alignTop: Boolean = false,
-    content: @Composable () -> Unit
-) {
-    Row(Modifier.fillMaxWidth().animateContentSize(), verticalAlignment = if (alignTop) Alignment.Top else Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = palette.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp) }
-        }
-        Spacer(Modifier.width(14.dp))
-        Box(Modifier.weight(1.05f), contentAlignment = Alignment.CenterEnd) {
-            content()
-        }
-    }
-}
-
-@Composable
 fun SettingsThinDivider(palette: Palette) {
     Spacer(Modifier.height(14.dp))
     Box(Modifier.fillMaxWidth().height(1.dp).background(palette.field))
     Spacer(Modifier.height(14.dp))
-}
-
-@Composable
-fun SettingsColumnRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    palette: Palette,
-    subtitle: String? = null,
-    content: @Composable () -> Unit
-) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .animateContentSize()
-            .padding(horizontal = 14.dp, vertical = 12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = palette.accent, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        content()
-    }
-}
-
-@Composable
-fun SettingsCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    palette: Palette,
-    subtitle: String? = null,
-    content: @Composable () -> Unit
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(palette.card)
-            .animateContentSize()
-            .padding(18.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = palette.accent)
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-            subtitle?.let { Text(it, color = palette.muted, fontSize = 13.sp) }
-        }
-        content()
-    }
-}
-
-@Composable
-fun SettingsSection(title: String, palette: Palette, content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, color = palette.muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                .background(palette.card)
-                .padding(vertical = 4.dp)
-        ) {
-            content()
-        }
-    }
-}
-
-@Composable
-fun SettingsRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    palette: Palette,
-    subtitle: String? = null,
-    content: @Composable () -> Unit
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .animateContentSize()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = palette.accent, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        }
-        Spacer(Modifier.width(12.dp))
-        Box(contentAlignment = Alignment.CenterEnd) {
-            content()
-        }
-    }
 }
 
 @Composable
@@ -2749,12 +2464,20 @@ fun SubscriptionEditorOverlay(
         AnimatedVisibility(
             visible = visible,
             enter = slideInVertically(
-                animationSpec = tween(240),
-                initialOffsetY = { it / 2 }
+                animationSpec = tween(260),
+                initialOffsetY = { it / 3 }
+            ) + scaleIn(
+                animationSpec = tween(260),
+                initialScale = 0.16f,
+                transformOrigin = TransformOrigin(0.9f, 1f)
             ) + fadeIn(animationSpec = tween(120)),
             exit = slideOutVertically(
-                animationSpec = tween(180),
-                targetOffsetY = { it / 2 }
+                animationSpec = tween(220),
+                targetOffsetY = { it / 3 }
+            ) + scaleOut(
+                animationSpec = tween(220),
+                targetScale = 0.16f,
+                transformOrigin = TransformOrigin(0.9f, 1f)
             ) + fadeOut(animationSpec = tween(100))
         ) {
             SubscriptionEditorSheet(
@@ -2878,9 +2601,9 @@ fun SubscriptionEditorSheet(
                 }
                 item { Field(name, { name = it }, copy.serviceName, palette) }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Segmented(Currency.entries, currency, { currencySymbol(it) }, palette, { currency = it })
-                        Field(price, { price = it }, copy.price, palette, keyboardType = KeyboardType.Decimal, modifier = Modifier.weight(1f))
+                        Field(price, { price = it }, copy.price, palette, keyboardType = KeyboardType.Decimal, modifier = Modifier.fillMaxWidth())
                     }
                 }
                 item {
@@ -2893,14 +2616,14 @@ fun SubscriptionEditorSheet(
                 }
                 if (cycle == BillingCycle.Custom) {
                     item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Field(
                                 customDuration,
                                 { customDuration = it.filter(Char::isDigit) },
                                 if (copy === zhCopy) "每" else "Every",
                                 palette,
                                 KeyboardType.Number,
-                                Modifier.weight(1f)
+                                Modifier.fillMaxWidth()
                             )
                             Segmented(CycleUnit.entries, customUnit, { cycleUnitText(it, if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En) }, palette) { customUnit = it }
                         }
