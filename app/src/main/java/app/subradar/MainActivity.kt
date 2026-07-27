@@ -27,8 +27,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
@@ -78,9 +76,12 @@ import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CreditCard
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -103,7 +104,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
@@ -191,7 +191,7 @@ enum class AppLanguage { En, Zh }
 enum class AppThemeMode { Light, Dark, Auto }
 enum class Currency { CNY, USD }
 enum class DisplayMode { List, Stats }
-enum class HomeTab { List, Stats, Attention }
+enum class HomeTab { Home, Stats, User }
 enum class SmartFilter { All, Attention, Due, LowBalance, Active, Archived }
 enum class SpendingMode { Fixed, Balance, Metered, Hybrid }
 enum class LedgerType { Renewal, Expense, TopUp, Refund, Adjustment, PriceChange }
@@ -232,6 +232,7 @@ data class Subscription(
     val ledger: List<LedgerEntry> = emptyList(),
     val category: String = "Other",
     val notes: String? = null,
+    val serviceUrl: String? = null,
     val imageUri: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -307,7 +308,6 @@ private val zhCopy = Copy(
     "备注", "添加图片", "保存订阅", "删除", "取消", "确认",
     "确定删除这个订阅？", "按月", "按季", "按年", "自定义", "续费", "今天付款"
 )
-
 class SubRadarStore(private val context: Context) {
     private val prefs = context.getSharedPreferences("subradar", Context.MODE_PRIVATE)
 
@@ -387,6 +387,7 @@ private fun JSONObject.toSubscription(): Subscription {
         }.orEmpty(),
         category = optString("category", "Other").ifBlank { "Other" },
         notes = optString("notes", "").ifBlank { null },
+        serviceUrl = optString("serviceUrl", "").ifBlank { optString("url", "").ifBlank { null } },
         imageUri = optString("imageUri", "").ifBlank { optString("image", "").ifBlank { null } },
         createdAt = optLong("createdAt", System.currentTimeMillis())
     )
@@ -412,6 +413,7 @@ private fun Subscription.toJson(): JSONObject {
     json.put("ledger", ledgerArray)
     json.put("category", category)
     notes?.let { json.put("notes", it) }
+    serviceUrl?.let { json.put("serviceUrl", it) }
     imageUri?.let { json.put("imageUri", it) }
     return json
 }
@@ -752,6 +754,8 @@ fun NativeSubRadar() {
     var editorItem by remember { mutableStateOf<Subscription?>(null) }
     var isCreating by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var collectionFilter by remember { mutableStateOf<SmartFilter?>(null) }
+    var homeTab by remember { mutableStateOf(HomeTab.Home) }
     var displayMode by remember { mutableStateOf(DisplayMode.List) }
     var categoryFilter by remember { mutableStateOf<String?>(null) }
     var smartFilter by remember { mutableStateOf(SmartFilter.All) }
@@ -792,7 +796,7 @@ fun NativeSubRadar() {
         if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
     }
 
-    BackHandler(enabled = showSettings || isCreating || editorItem != null || renewalItem != null || ledgerItem != null) {
+    BackHandler(enabled = showSettings || collectionFilter != null || isCreating || editorItem != null || renewalItem != null || ledgerItem != null) {
         when {
             renewalItem != null -> renewalItem = null
             ledgerItem != null -> ledgerItem = null
@@ -800,6 +804,7 @@ fun NativeSubRadar() {
                 isCreating = false
                 editorItem = null
             }
+            collectionFilter != null -> collectionFilter = null
             showSettings -> showSettings = false
         }
     }
@@ -814,6 +819,7 @@ fun NativeSubRadar() {
                         .sortedBy { it.nextBillingDate },
                     allItems = subscriptions,
                     settings = settings,
+                    activeTab = homeTab,
                     displayMode = displayMode,
                     categoryFilter = categoryFilter,
                     smartFilter = smartFilter,
@@ -821,10 +827,13 @@ fun NativeSubRadar() {
                     palette = palette,
                     searchQuery = searchQuery,
                     onSearchChange = { searchQuery = it },
+                    onTabChange = { homeTab = it },
                     onDisplayModeChange = { displayMode = it },
                     onCategoryFilterChange = { categoryFilter = it },
                     onSmartFilterChange = { smartFilter = it },
                     onOpenSettings = { showSettings = true },
+                    onOpenAttentionPage = { collectionFilter = SmartFilter.Attention },
+                    onOpenArchivedPage = { collectionFilter = SmartFilter.Archived },
                     onOpenEditor = { editorItem = it; isCreating = false },
                     onRenew = { sub -> renewalItem = sub },
                     onLedger = { sub, type ->
@@ -862,6 +871,34 @@ fun NativeSubRadar() {
                             }
                         }
                     )
+                }
+                AnimatedVisibility(
+                    visible = collectionFilter != null,
+                    enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                    exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+                ) {
+                    collectionFilter?.let { filter ->
+                        SubscriptionCollectionPage(
+                            filter = filter,
+                            allItems = subscriptions,
+                            settings = settings,
+                            copy = copy,
+                            palette = palette,
+                            onBack = { collectionFilter = null },
+                            onOpenEditor = { editorItem = it; isCreating = false },
+                            onRenew = { sub -> renewalItem = sub },
+                            onLedger = { sub, type ->
+                                ledgerItem = sub
+                                ledgerType = type
+                            },
+                            onStateChange = { sub, state ->
+                                val index = subscriptions.indexOfFirst { it.id == sub.id }
+                                if (index >= 0) subscriptions[index] = setSubscriptionState(subscriptions[index], state)
+                                store.saveSubscriptions(subscriptions)
+                                if (settings.notificationsEnabled) scheduleReminders(context, subscriptions, copy, settings.reminderDaysBefore)
+                            }
+                        )
+                    }
                 }
 
                 SubscriptionEditorOverlay(
@@ -976,9 +1013,9 @@ data class Palette(
 )
 
 private fun palette(isDark: Boolean) = if (isDark) {
-    Palette(Color(0xFF0B0F14), Color(0xFF161B22), Color(0xFF202630), Color(0xFFF2F4F8), Color(0xFF9AA4B2), Color(0xFF2B3340), Color(0xFF5FB3A4), Color(0xFF143A35), Color(0xFFF59E0B), Color(0xFFEF4444))
+    Palette(Color(0xFF0B0F14), Color(0xFF161B22), Color(0xFF202630), Color(0xFFF2F4F8), Color(0xFF9AA4B2), Color(0xFF2B3340), Color(0xFF8EA2FF), Color(0xFF1D244C), Color(0xFFF59E0B), Color(0xFFEF4444))
 } else {
-    Palette(Color(0xFFF7F8FA), Color.White, Color(0xFFEEF1F5), Color(0xFF111827), Color(0xFF687385), Color(0xFFE4E8EF), Color(0xFF2F7D6D), Color(0xFFE6F0EE), Color(0xFFD97706), Color(0xFFDC2626))
+    Palette(Color(0xFFF8F9FF), Color.White, Color(0xFFF0F3FF), Color(0xFF111827), Color(0xFF687385), Color(0xFFE2E7F8), Color(0xFF4F6FF5), Color(0xFFECEFFF), Color(0xFFD97706), Color(0xFFDC2626))
 }
 
 data class MiuixButtonColors(val containerColor: Color, val contentColor: Color)
@@ -1086,7 +1123,7 @@ fun Button(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    colors: MiuixButtonColors = MiuixButtonColors(Color(0xFF2F7D6D), Color.White),
+    colors: MiuixButtonColors = MiuixButtonColors(Color(0xFF4F6FF5), Color.White),
     content: @Composable () -> Unit
 ) {
     val background by animateColorAsState(
@@ -1113,7 +1150,7 @@ fun Button(
 @Composable
 fun Switch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val background by animateColorAsState(
-        targetValue = if (checked) Color(0xFF2F7D6D) else Color(0xFFCBD5E1),
+        targetValue = if (checked) Color(0xFF4F6FF5) else Color(0xFFCBD5E1),
         label = "switch background"
     )
     val knobOffset by animateDpAsState(
@@ -1179,7 +1216,7 @@ fun OutlinedTextField(
                 minLines = minLines,
                 keyboardOptions = keyboardOptions,
                 textStyle = TextStyle(color = colors.contentColor, fontSize = 16.sp),
-                cursorBrush = SolidColor(Color(0xFF2F7D6D)),
+                cursorBrush = SolidColor(Color(0xFF4F6FF5)),
                 modifier = Modifier.weight(1f),
                 decorationBox = { inner ->
                     if (value.isEmpty() && placeholder != null) {
@@ -1280,6 +1317,7 @@ fun MainScreen(
     items: List<Subscription>,
     allItems: List<Subscription>,
     settings: AppSettings,
+    activeTab: HomeTab,
     displayMode: DisplayMode,
     categoryFilter: String?,
     smartFilter: SmartFilter,
@@ -1287,10 +1325,13 @@ fun MainScreen(
     palette: Palette,
     searchQuery: String,
     onSearchChange: (String) -> Unit,
+    onTabChange: (HomeTab) -> Unit,
     onDisplayModeChange: (DisplayMode) -> Unit,
     onCategoryFilterChange: (String?) -> Unit,
     onSmartFilterChange: (SmartFilter) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAttentionPage: () -> Unit,
+    onOpenArchivedPage: () -> Unit,
     onOpenEditor: (Subscription) -> Unit,
     onRenew: (Subscription) -> Unit,
     onLedger: (Subscription, LedgerType) -> Unit,
@@ -1303,16 +1344,10 @@ fun MainScreen(
         .filter { categoryFilter == null || it.category == categoryFilter }
         .filter { matchesSmartFilter(it, smartFilter) || (smartFilter == SmartFilter.Attention && duplicateIds.contains(it.id)) }
     val categories = allItems.map { it.category }.distinct().sorted()
-    val attentionItems = allItems.filter { needsAttention(it) || duplicateIds.contains(it.id) }
-    val lowBalanceCount = allItems.count { isLowBalance(it) }
-    val activeTab = when {
-        smartFilter == SmartFilter.Attention -> HomeTab.Attention
-        displayMode == DisplayMode.Stats -> HomeTab.Stats
-        else -> HomeTab.List
-    }
     val selectHomeTab: (HomeTab) -> Unit = { tab ->
+        onTabChange(tab)
         when (tab) {
-            HomeTab.List -> {
+            HomeTab.Home -> {
                 onDisplayModeChange(DisplayMode.List)
                 if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
             }
@@ -1320,111 +1355,85 @@ fun MainScreen(
                 onDisplayModeChange(DisplayMode.Stats)
                 if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
             }
-            HomeTab.Attention -> {
+            HomeTab.User -> {
                 onDisplayModeChange(DisplayMode.List)
-                onSmartFilterChange(SmartFilter.Attention)
             }
         }
     }
     val swipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     Box(Modifier.fillMaxSize().background(palette.bg)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            CompactHeader(
-                items = allItems,
-                settings = settings,
-                copy = copy,
-                palette = palette,
-                searchQuery = searchQuery,
-                searchExpanded = searchExpanded,
-                onToggleSearch = {
-                    searchExpanded = !searchExpanded
-                    if (!searchExpanded) onSearchChange("")
+        val contentState = "${activeTab.name}:${when {
+            activeTab == HomeTab.User -> "content"
+            activeTab == HomeTab.Stats -> "content"
+            allItems.isEmpty() -> "empty"
+            visibleItems.isEmpty() -> "noResults"
+            else -> "content"
+        }}"
+        AnimatedContent(
+            targetState = contentState,
+            transitionSpec = {
+                val forward = tabOrder(targetState) > tabOrder(initialState)
+                val enterOffset: (Int) -> Int = { width -> if (forward) width else -width }
+                val exitOffset: (Int) -> Int = { width -> if (forward) -width else width }
+                (slideInHorizontally(animationSpec = tween(260), initialOffsetX = enterOffset) + fadeIn(animationSpec = tween(160)))
+                    .togetherWith(slideOutHorizontally(animationSpec = tween(260), targetOffsetX = exitOffset) + fadeOut(animationSpec = tween(120)))
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .pointerInput(activeTab) {
+                    var dragAmount = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragAmount = 0f },
+                        onHorizontalDrag = { _, dragDelta -> dragAmount += dragDelta },
+                        onDragEnd = {
+                            when {
+                                dragAmount <= -swipeThresholdPx -> nextHomeTab(activeTab)?.let(selectHomeTab)
+                                dragAmount >= swipeThresholdPx -> previousHomeTab(activeTab)?.let(selectHomeTab)
+                            }
+                            dragAmount = 0f
+                        },
+                        onDragCancel = { dragAmount = 0f }
+                    )
                 },
-                onOpenSettings = onOpenSettings
-            )
-            AnimatedVisibility(
-                visible = searchExpanded,
-                enter = expandVertically(animationSpec = tween(220), expandFrom = Alignment.Top) +
-                    fadeIn(animationSpec = tween(160)) +
-                    slideInVertically(animationSpec = tween(220), initialOffsetY = { -it / 3 }),
-                exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) +
-                    fadeOut(animationSpec = tween(120)) +
-                    slideOutVertically(animationSpec = tween(180), targetOffsetY = { -it / 3 })
-            ) {
-                HomeSearchField(
-                    value = searchQuery,
+            label = "main page"
+        ) { state ->
+            val tab = state.substringBefore(":")
+            val result = state.substringAfter(":")
+            when {
+                tab == HomeTab.Stats.name -> StatsView(allItems, settings, palette)
+                tab == HomeTab.User.name -> UserCenter(
+                    allItems = allItems,
+                    settings = settings,
                     copy = copy,
                     palette = palette,
-                    onValueChange = onSearchChange,
-                    onClose = {
-                        searchExpanded = false
-                        onSearchChange("")
-                    }
+                    onOpenSettings = onOpenSettings,
+                    onShowArchived = onOpenArchivedPage,
+                    onShowAttention = onOpenAttentionPage
                 )
-            }
-            CategoryFilterRow(
-                categories = categories,
-                categoryFilter = categoryFilter,
-                settings = settings,
-                palette = palette,
-                onCategoryFilterChange = onCategoryFilterChange
-            )
-            val contentState = "${activeTab.name}:${when {
-                allItems.isEmpty() -> "empty"
-                visibleItems.isEmpty() -> "noResults"
-                else -> "content"
-            }}"
-            AnimatedContent(
-                targetState = contentState,
-                transitionSpec = {
-                    val forward = tabOrder(targetState) > tabOrder(initialState)
-                    val enterOffset: (Int) -> Int = { width -> if (forward) width else -width }
-                    val exitOffset: (Int) -> Int = { width -> if (forward) -width else width }
-                    (slideInHorizontally(animationSpec = tween(220), initialOffsetX = enterOffset) + fadeIn(animationSpec = tween(180)))
-                        .togetherWith(slideOutHorizontally(animationSpec = tween(200), targetOffsetX = exitOffset) + fadeOut(animationSpec = tween(140)))
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .pointerInput(activeTab) {
-                        var dragAmount = 0f
-                        detectHorizontalDragGestures(
-                            onDragStart = { dragAmount = 0f },
-                            onHorizontalDrag = { _, dragDelta -> dragAmount += dragDelta },
-                            onDragEnd = {
-                                when {
-                                    dragAmount <= -swipeThresholdPx -> nextHomeTab(activeTab)?.let(selectHomeTab)
-                                    dragAmount >= swipeThresholdPx -> previousHomeTab(activeTab)?.let(selectHomeTab)
-                                }
-                                dragAmount = 0f
-                            },
-                            onDragCancel = { dragAmount = 0f }
-                        )
+                else -> HomePage(
+                    result = result,
+                    allItems = allItems,
+                    visibleItems = visibleItems,
+                    categories = categories,
+                    categoryFilter = categoryFilter,
+                    settings = settings,
+                    copy = copy,
+                    palette = palette,
+                    searchQuery = searchQuery,
+                    searchExpanded = searchExpanded,
+                    onToggleSearch = {
+                        searchExpanded = !searchExpanded
+                        if (!searchExpanded) onSearchChange("")
                     },
-                label = "main content"
-            ) { state ->
-                val tab = state.substringBefore(":")
-                val result = state.substringAfter(":")
-                when {
-                    result == "empty" -> EmptyState(copy, palette)
-                    result == "noResults" -> EmptyState(
-                        copy = copy,
-                        palette = palette,
-                        title = if (settings.language == AppLanguage.Zh) "未找到订阅" else "No matching subscriptions",
-                        description = if (settings.language == AppLanguage.Zh) "换个关键词试试。" else "Try another search term."
-                    )
-                    tab == HomeTab.Stats.name -> StatsView(visibleItems, settings, palette)
-                    else -> SubscriptionList(
-                        items = visibleItems,
-                        settings = settings,
-                        copy = copy,
-                        palette = palette,
-                        onOpenEditor = onOpenEditor,
-                        onRenew = onRenew,
-                        onLedger = onLedger,
-                        onStateChange = onStateChange,
-                        duplicateIds = duplicateIds
-                    )
-                }
+                    onSearchChange = onSearchChange,
+                    onCategoryFilterChange = onCategoryFilterChange,
+                    onOpenEditor = onOpenEditor,
+                    onRenew = onRenew,
+                    onLedger = onLedger,
+                    onStateChange = onStateChange,
+                    duplicateIds = duplicateIds
+                )
             }
         }
         Row(
@@ -1438,7 +1447,6 @@ fun MainScreen(
         ) {
             FloatingNavigationBar(
                 activeTab = activeTab,
-                attentionCount = attentionItems.size + lowBalanceCount,
                 settings = settings,
                 palette = palette,
                 onSelectTab = selectHomeTab,
@@ -1451,14 +1459,14 @@ fun MainScreen(
 
 private fun tabOrder(state: String): Int {
     return when (state.substringBefore(":")) {
-        HomeTab.List.name -> 0
+        HomeTab.Home.name -> 0
         HomeTab.Stats.name -> 1
-        HomeTab.Attention.name -> 2
+        HomeTab.User.name -> 2
         else -> 0
     }
 }
 
-private val homeTabSequence = listOf(HomeTab.List, HomeTab.Stats, HomeTab.Attention)
+private val homeTabSequence = listOf(HomeTab.Home, HomeTab.Stats, HomeTab.User)
 
 private fun nextHomeTab(tab: HomeTab): HomeTab? {
     val index = homeTabSequence.indexOf(tab)
@@ -1500,7 +1508,6 @@ fun CategoryFilterRow(
 @Composable
 fun FloatingNavigationBar(
     activeTab: HomeTab,
-    attentionCount: Int,
     settings: AppSettings,
     palette: Palette,
     onSelectTab: (HomeTab) -> Unit,
@@ -1508,20 +1515,20 @@ fun FloatingNavigationBar(
 ) {
     Row(
         modifier
-            .shadow(16.dp, CircleShape, clip = false)
+            .shadow(12.dp, CircleShape, clip = false)
             .clip(CircleShape)
             .background(palette.card.copy(alpha = 0.96f))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 4.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         FloatingNavItem(
-            icon = Icons.Rounded.CreditCard,
-            label = displayModeLabel(HomeTab.List, settings.language),
-            selected = activeTab == HomeTab.List,
+            icon = Icons.Rounded.Home,
+            label = displayModeLabel(HomeTab.Home, settings.language),
+            selected = activeTab == HomeTab.Home,
             palette = palette,
             modifier = Modifier.weight(1f)
-        ) { onSelectTab(HomeTab.List) }
+        ) { onSelectTab(HomeTab.Home) }
         FloatingNavItem(
             icon = Icons.Rounded.Wallet,
             label = displayModeLabel(HomeTab.Stats, settings.language),
@@ -1530,13 +1537,12 @@ fun FloatingNavigationBar(
             modifier = Modifier.weight(1f)
         ) { onSelectTab(HomeTab.Stats) }
         FloatingNavItem(
-            icon = Icons.Rounded.Notifications,
-            label = if (settings.language == AppLanguage.Zh) "待办" else "Due",
-            selected = activeTab == HomeTab.Attention,
-            badge = attentionCount,
+            icon = Icons.Rounded.Person,
+            label = displayModeLabel(HomeTab.User, settings.language),
+            selected = activeTab == HomeTab.User,
             palette = palette,
             modifier = Modifier.weight(1f),
-            onClick = { onSelectTab(HomeTab.Attention) }
+            onClick = { onSelectTab(HomeTab.User) }
         )
     }
 }
@@ -1634,7 +1640,7 @@ fun FloatingNavItem(
                 Text(
                     label,
                     color = contentColor,
-                    fontSize = 9.sp,
+                    fontSize = 8.sp,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1645,32 +1651,109 @@ fun FloatingNavItem(
 }
 
 @Composable
-fun CompactHeader(
-    items: List<Subscription>,
+fun PageHeader(
+    title: String,
+    subtitle: String,
+    palette: Palette,
+    searchQuery: String,
+    searchExpanded: Boolean,
+    onToggleSearch: (() -> Unit)? = null
+) {
+    Column(Modifier.fillMaxWidth().background(palette.bg).padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                Text(subtitle, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            onToggleSearch?.let { toggle ->
+                IconButton(onClick = toggle) {
+                    Icon(
+                        if (searchExpanded || searchQuery.isNotBlank()) Icons.Rounded.Close else Icons.Rounded.Search,
+                        null,
+                        tint = if (searchExpanded || searchQuery.isNotBlank()) palette.accent else palette.text
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HomePage(
+    result: String,
+    allItems: List<Subscription>,
+    visibleItems: List<Subscription>,
+    categories: List<String>,
+    categoryFilter: String?,
     settings: AppSettings,
     copy: Copy,
     palette: Palette,
     searchQuery: String,
     searchExpanded: Boolean,
     onToggleSearch: () -> Unit,
-    onOpenSettings: () -> Unit
+    onSearchChange: (String) -> Unit,
+    onCategoryFilterChange: (String?) -> Unit,
+    onOpenEditor: (Subscription) -> Unit,
+    onRenew: (Subscription) -> Unit,
+    onLedger: (Subscription, LedgerType) -> Unit,
+    onStateChange: (Subscription, SubscriptionState) -> Unit,
+    duplicateIds: Set<String>
 ) {
-    Column(Modifier.fillMaxWidth().background(palette.bg).padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(copy.appName, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 24.sp)
-                Text("${totalMonthly(items, settings.language)} ${copy.totalMonthly}", color = palette.muted, fontSize = 12.sp)
-            }
-            IconButton(onClick = onToggleSearch) {
-                Icon(
-                    if (searchExpanded || searchQuery.isNotBlank()) Icons.Rounded.Close else Icons.Rounded.Search,
-                    null,
-                    tint = if (searchExpanded || searchQuery.isNotBlank()) palette.accent else palette.text
-                )
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Rounded.Settings, null, tint = palette.text)
-            }
+    Column(Modifier.fillMaxSize().background(palette.bg)) {
+        PageHeader(
+            title = copy.appName,
+            subtitle = "${totalMonthly(allItems, settings.language)} ${copy.totalMonthly}",
+            palette = palette,
+            searchQuery = searchQuery,
+            searchExpanded = searchExpanded,
+            onToggleSearch = onToggleSearch
+        )
+        AnimatedVisibility(
+            visible = searchExpanded,
+            enter = expandVertically(animationSpec = tween(220), expandFrom = Alignment.Top) +
+                fadeIn(animationSpec = tween(160)) +
+                slideInVertically(animationSpec = tween(220), initialOffsetY = { -it / 3 }),
+            exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) +
+                fadeOut(animationSpec = tween(120)) +
+                slideOutVertically(animationSpec = tween(180), targetOffsetY = { -it / 3 })
+        ) {
+            HomeSearchField(
+                value = searchQuery,
+                copy = copy,
+                palette = palette,
+                onValueChange = onSearchChange,
+                onClose = {
+                    onToggleSearch()
+                    onSearchChange("")
+                }
+            )
+        }
+        CategoryFilterRow(
+            categories = categories,
+            categoryFilter = categoryFilter,
+            settings = settings,
+            palette = palette,
+            onCategoryFilterChange = onCategoryFilterChange
+        )
+        when (result) {
+            "empty" -> EmptyState(copy, palette)
+            "noResults" -> EmptyState(
+                copy = copy,
+                palette = palette,
+                title = if (settings.language == AppLanguage.Zh) "\u672A\u627E\u5230\u8BA2\u9605" else "No matching subscriptions",
+                description = if (settings.language == AppLanguage.Zh) "\u6362\u4E2A\u5173\u952E\u8BCD\u8BD5\u8BD5\u3002" else "Try another search term."
+            )
+            else -> SubscriptionList(
+                items = visibleItems,
+                settings = settings,
+                copy = copy,
+                palette = palette,
+                onOpenEditor = onOpenEditor,
+                onRenew = onRenew,
+                onLedger = onLedger,
+                onStateChange = onStateChange,
+                duplicateIds = duplicateIds
+            )
         }
     }
 }
@@ -1746,106 +1829,267 @@ fun SubscriptionList(
 fun StatsView(items: List<Subscription>, settings: AppSettings, palette: Palette) {
     val language = settings.language
     val activeItems = items.filter { it.state != SubscriptionState.Archived }
+    val monthly = activeItems.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) }
+    val annual = monthly * 12
     val nextSeven = activeItems.count {
         val days = ChronoUnit.DAYS.between(LocalDate.now(), parseDate(it.nextBillingDate) ?: LocalDate.now())
         days in 0..7
     }
-    val annual = activeItems.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) * 12 }
+    val lowBalance = activeItems.count { isLowBalance(it) }
     val byCategory = activeItems.groupBy { it.category }
         .mapValues { entry -> entry.value.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) } }
         .entries.sortedByDescending { it.value }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 104.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            StatCard(
-                title = if (language == AppLanguage.Zh) "\u6708\u5747\u652F\u51FA" else "Monthly average",
-                value = formatMoney(activeItems.sumOf { monthlyInCurrency(it, settings.primaryCurrency, settings.usdToCnyRate) }, settings.primaryCurrency),
-                palette = palette
-            )
-        }
-        item {
-            StatCard(
-                title = if (language == AppLanguage.Zh) "\u5E74\u5EA6\u9884\u4F30" else "Annual estimate",
-                value = formatMoney(annual, settings.primaryCurrency),
-                palette = palette
-            )
-        }
-        item {
-            StatCard(
-                title = if (language == AppLanguage.Zh) "\u672A\u6765 7 \u5929\u5230\u671F" else "Due in 7 days",
-                value = nextSeven.toString(),
-                palette = palette
-            )
-        }
-        items(byCategory) { entry ->
-            StatCard(entry.key, formatMoney(entry.value, settings.primaryCurrency), palette)
+    val topCategory = byCategory.firstOrNull()
+
+    Column(Modifier.fillMaxSize().background(palette.bg)) {
+        PageHeader(
+            title = if (language == AppLanguage.Zh) "\u7EDF\u8BA1" else "Stats",
+            subtitle = if (language == AppLanguage.Zh) "${activeItems.size} \u4E2A\u6D3B\u8DC3\u8BA2\u9605\u7684\u652F\u51FA\u6982\u89C8" else "Spending overview for ${activeItems.size} active subscriptions",
+            palette = palette,
+            searchQuery = "",
+            searchExpanded = false
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 104.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(palette.card).padding(18.dp)) {
+                    Text(if (language == AppLanguage.Zh) "\u6708\u5747\u652F\u51FA" else "Monthly average", color = palette.muted, fontSize = 13.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(formatMoney(monthly, settings.primaryCurrency), color = palette.text, fontWeight = FontWeight.Bold, fontSize = 30.sp)
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CycleChip(if (language == AppLanguage.Zh) "\u5E74\u5EA6 ${formatMoney(annual, settings.primaryCurrency)}" else "Annual ${formatMoney(annual, settings.primaryCurrency)}", true, palette) {}
+                        CycleChip(if (language == AppLanguage.Zh) "7 \u5929\u5185 $nextSeven" else "7 days $nextSeven", nextSeven > 0, palette) {}
+                        CycleChip(if (language == AppLanguage.Zh) "\u4F59\u989D\u4E0D\u8DB3 $lowBalance" else "Low balance $lowBalance", lowBalance > 0, palette) {}
+                    }
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    StatCard(if (language == AppLanguage.Zh) "\u6D3B\u8DC3" else "Active", activeItems.size.toString(), palette, Modifier.weight(1f))
+                    StatCard(if (language == AppLanguage.Zh) "\u5206\u7C7B" else "Categories", byCategory.size.toString(), palette, Modifier.weight(1f))
+                }
+            }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.Wallet,
+                    title = if (language == AppLanguage.Zh) "\u5206\u7C7B\u6392\u884C" else "Category ranking",
+                    subtitle = topCategory?.let { if (language == AppLanguage.Zh) "\u6700\u9AD8\uFF1A${it.key}" else "Top: ${it.key}" } ?: if (language == AppLanguage.Zh) "\u6682\u65E0\u5206\u7C7B\u6570\u636E" else "No category data yet",
+                    palette = palette
+                ) {
+                    if (byCategory.isEmpty()) {
+                        Text(if (language == AppLanguage.Zh) "\u6DFB\u52A0\u8BA2\u9605\u540E\u5C31\u80FD\u770B\u5230\u5206\u7C7B\u652F\u51FA\u3002" else "Add subscriptions to see category spending.", color = palette.muted, fontSize = 13.sp)
+                    } else {
+                        byCategory.take(6).forEachIndexed { index, entry ->
+                            if (index > 0) SettingsThinDivider(palette)
+                            StatListRow(entry.key, formatMoney(entry.value, settings.primaryCurrency), palette)
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-fun StatCard(title: String, value: String, palette: Palette) {
+fun StatCard(title: String, value: String, palette: Palette, modifier: Modifier = Modifier) {
     Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+        modifier
+            .clip(RoundedCornerShape(22.dp))
             .background(palette.card)
-            .padding(18.dp)
+            .padding(16.dp)
     ) {
-        Text(title, color = palette.muted, fontSize = 13.sp)
+        Text(title, color = palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(6.dp))
-        Text(value, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 26.sp)
+        Text(value, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
-fun Header(
-    items: List<Subscription>,
+fun StatListRow(title: String, value: String, palette: Palette) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, color = palette.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(12.dp))
+        Text(value, color = palette.text, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+@Composable
+fun UserCenter(
+    allItems: List<Subscription>,
     settings: AppSettings,
     copy: Copy,
     palette: Palette,
-    searchQuery: String,
-    onSearchChange: (String) -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onShowArchived: () -> Unit,
+    onShowAttention: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().background(palette.bg).padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(copy.appName, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 28.sp)
-                Text("${totalMonthly(items, settings.language)} ${copy.totalMonthly}", color = palette.muted, fontSize = 13.sp)
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Rounded.Settings, null, tint = palette.text)
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchChange,
-            placeholder = { Text(copy.search) },
-            leadingIcon = { Icon(Icons.Rounded.Search, null) },
-            trailingIcon = {
-                if (searchQuery.isNotBlank()) {
-                    IconButton(onClick = { onSearchChange("") }) {
-                        Icon(Icons.Rounded.Close, null)
+    val language = settings.language
+    val activeCount = allItems.count { it.state == SubscriptionState.Active }
+    val archivedCount = allItems.count { it.state == SubscriptionState.Archived }
+    val attentionCount = allItems.count { needsAttention(it) }
+    val pausedCount = allItems.count { it.state == SubscriptionState.Paused }
+    Column(Modifier.fillMaxSize().background(palette.bg)) {
+        PageHeader(
+            title = if (language == AppLanguage.Zh) "\u7528\u6237" else "User",
+            subtitle = if (language == AppLanguage.Zh) "\u7BA1\u7406\u8BA2\u9605\u72B6\u6001\u3001\u5F52\u6863\u548C\u504F\u597D" else "Manage status, archive, and preferences",
+            palette = palette,
+            searchQuery = "",
+            searchExpanded = false
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 104.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.Person,
+                    title = "SubRadar",
+                    subtitle = if (language == AppLanguage.Zh) "\u672C\u5730\u4FDD\u5B58\uFF0C\u4E13\u6CE8\u8BA2\u9605\u548C\u7EED\u8D39" else "Local-first subscription and renewal tracking",
+                    palette = palette
+                ) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CycleChip(if (language == AppLanguage.Zh) "\u6D3B\u8DC3 $activeCount" else "Active $activeCount", true, palette) {}
+                        CycleChip(if (language == AppLanguage.Zh) "\u6682\u505C $pausedCount" else "Paused $pausedCount", pausedCount > 0, palette) {}
+                        CycleChip(if (language == AppLanguage.Zh) "\u5F52\u6863 $archivedCount" else "Archived $archivedCount", archivedCount > 0, palette) {}
                     }
                 }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(18.dp),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = palette.field,
-                unfocusedContainerColor = palette.field,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                contentColor = palette.text,
-                placeholderColor = palette.muted
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
+            }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.Inventory2,
+                    title = if (language == AppLanguage.Zh) "\u8BA2\u9605\u7BA1\u7406" else "Subscription library",
+                    subtitle = if (language == AppLanguage.Zh) "\u5FEB\u901F\u56DE\u5230\u9700\u8981\u5904\u7406\u7684\u5217\u8868" else "Jump into lists that need review",
+                    palette = palette
+                ) {
+                    SettingsActionRow(
+                        title = if (language == AppLanguage.Zh) "\u5F85\u529E\u8BA2\u9605" else "Due subscriptions",
+                        subtitle = if (language == AppLanguage.Zh) "\u5230\u671F\u3001\u4F59\u989D\u4E0D\u8DB3\u548C\u5F02\u5E38\u65E5\u671F\uFF1A$attentionCount" else "Due, low balance, unusual dates: $attentionCount",
+                        palette = palette,
+                        action = { TextButton(onClick = onShowAttention) { Text(if (language == AppLanguage.Zh) "\u67E5\u770B" else "View") } }
+                    )
+                    SettingsThinDivider(palette)
+                    SettingsActionRow(
+                        title = if (language == AppLanguage.Zh) "\u5F52\u6863\u8BA2\u9605" else "Archived subscriptions",
+                        subtitle = if (language == AppLanguage.Zh) "\u67E5\u627E\u5DF2\u5F52\u6863\u7684\u8BA2\u9605\uFF1A$archivedCount" else "Search archived subscriptions: $archivedCount",
+                        palette = palette,
+                        action = { TextButton(onClick = onShowArchived) { Text(if (language == AppLanguage.Zh) "\u67E5\u770B" else "View") } }
+                    )
+                }
+            }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.Settings,
+                    title = if (language == AppLanguage.Zh) "\u5E94\u7528\u8BBE\u7F6E" else "App settings",
+                    subtitle = if (language == AppLanguage.Zh) "\u8BED\u8A00\u3001\u63D0\u9192\u3001\u8D27\u5E01\u3001\u5907\u4EFD" else "Language, reminders, currency, backup",
+                    palette = palette
+                ) {
+                    SettingsActionRow(
+                        title = if (language == AppLanguage.Zh) "\u6253\u5F00\u8BBE\u7F6E" else "Open settings",
+                        subtitle = if (language == AppLanguage.Zh) "SubRadar v2.0.0.7" else "SubRadar v2.0.0.7",
+                        palette = palette,
+                        action = { TextButton(onClick = onOpenSettings) { Text(if (language == AppLanguage.Zh) "\u6253\u5F00" else "Open") } }
+                    )
+                }
+            }
+            item {
+                Text(copy.about, color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun SubscriptionCollectionPage(
+    filter: SmartFilter,
+    allItems: List<Subscription>,
+    settings: AppSettings,
+    copy: Copy,
+    palette: Palette,
+    onBack: () -> Unit,
+    onOpenEditor: (Subscription) -> Unit,
+    onRenew: (Subscription) -> Unit,
+    onLedger: (Subscription, LedgerType) -> Unit,
+    onStateChange: (Subscription, SubscriptionState) -> Unit
+) {
+    var query by remember(filter) { mutableStateOf("") }
+    var searchExpanded by remember(filter) { mutableStateOf(false) }
+    val language = settings.language
+    val duplicateIds = duplicateIds(allItems)
+    val items = allItems
+        .filter { sub ->
+            when (filter) {
+                SmartFilter.Attention -> needsAttention(sub) || duplicateIds.contains(sub.id)
+                SmartFilter.Archived -> sub.state == SubscriptionState.Archived
+                else -> matchesSmartFilter(sub, filter)
+            }
+        }
+        .filter { it.name.contains(query, ignoreCase = true) || it.category.contains(query, ignoreCase = true) }
+        .sortedBy { it.nextBillingDate }
+    Column(Modifier.fillMaxSize().background(palette.bg).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when (filter) {
+                        SmartFilter.Archived -> if (language == AppLanguage.Zh) "\u5F52\u6863\u8BA2\u9605" else "Archived subscriptions"
+                        else -> if (language == AppLanguage.Zh) "\u5F85\u529E\u8BA2\u9605" else "Due subscriptions"
+                    },
+                    color = palette.text,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(if (language == AppLanguage.Zh) "${items.size} \u9879" else "${items.size} items", color = palette.muted, fontSize = 12.sp)
+            }
+            IconButton(onClick = {
+                searchExpanded = !searchExpanded
+                if (!searchExpanded) query = ""
+            }) {
+                Icon(if (searchExpanded || query.isNotBlank()) Icons.Rounded.Close else Icons.Rounded.Search, null, tint = if (searchExpanded || query.isNotBlank()) palette.accent else palette.text)
+            }
+        }
+        AnimatedVisibility(
+            visible = searchExpanded,
+            enter = expandVertically(animationSpec = tween(220), expandFrom = Alignment.Top) + fadeIn(animationSpec = tween(160)),
+            exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) + fadeOut(animationSpec = tween(120))
+        ) {
+            HomeSearchField(
+                value = query,
+                copy = copy,
+                palette = palette,
+                onValueChange = { query = it },
+                onClose = {
+                    searchExpanded = false
+                    query = ""
+                }
+            )
+        }
+        if (items.isEmpty()) {
+            EmptyState(
+                copy = copy,
+                palette = palette,
+                title = when (filter) {
+                    SmartFilter.Archived -> if (language == AppLanguage.Zh) "\u6682\u65E0\u5F52\u6863\u8BA2\u9605" else "No archived subscriptions"
+                    else -> if (language == AppLanguage.Zh) "\u6682\u65E0\u5F85\u529E\u8BA2\u9605" else "No due subscriptions"
+                },
+                description = if (language == AppLanguage.Zh) "\u8FD9\u91CC\u4F1A\u663E\u793A\u9700\u8981\u5355\u72EC\u5904\u7406\u7684\u8BA2\u9605\u3002" else "Subscriptions that need a separate review will appear here."
+            )
+        } else {
+            SubscriptionList(
+                items = items,
+                settings = settings,
+                copy = copy,
+                palette = palette,
+                onOpenEditor = onOpenEditor,
+                onRenew = onRenew,
+                onLedger = onLedger,
+                onStateChange = onStateChange,
+                duplicateIds = duplicateIds
+            )
+        }
     }
 }
 
@@ -1889,124 +2133,131 @@ fun SubscriptionRow(
     val days = ChronoUnit.DAYS.between(today, next).toInt()
     val isToday = days == 0
     val isPast = days < 0
+    val isInactive = sub.state != SubscriptionState.Active
+    val lowBalance = isLowBalance(sub)
     val issues = issueLabels(sub, language).let { labels ->
-        if (isDuplicate) {
-            labels + if (language == AppLanguage.Zh) "疑似重复" else "Possible duplicate"
-        } else {
-            labels
-        }
+        if (isDuplicate) labels + if (language == AppLanguage.Zh) "\u7591\u4F3C\u91CD\u590D" else "Possible duplicate" else labels
     }
     val surface = when {
-        sub.state == SubscriptionState.Paused -> palette.field
-        sub.state == SubscriptionState.Archived -> palette.field
-        isToday -> if (palette.bg == Color(0xFF0B0F14)) Color(0xFF33230A) else Color(0xFFFFF4D6)
-        isPast -> if (palette.bg == Color(0xFF0B0F14)) Color(0xFF341515) else Color(0xFFFFEBEB)
+        sub.state == SubscriptionState.Paused || sub.state == SubscriptionState.Archived -> palette.field
+        isPast -> if (palette.bg == Color(0xFF0B0F14)) Color(0xFF341515) else Color(0xFFFFF0F0)
+        isToday -> if (palette.bg == Color(0xFF0B0F14)) Color(0xFF33230A) else Color(0xFFFFF7E6)
         else -> palette.card
     }
-    val animatedSurface by animateColorAsState(targetValue = surface, label = "subscription surface")
+    val dateColor = when {
+        isPast || lowBalance -> palette.danger
+        isToday -> palette.warning
+        isInactive -> palette.muted
+        else -> palette.accent
+    }
+    val dueText = when {
+        sub.state == SubscriptionState.Paused -> if (language == AppLanguage.Zh) "\u5DF2\u6682\u505C" else "Paused"
+        sub.state == SubscriptionState.Archived -> if (language == AppLanguage.Zh) "\u5DF2\u5F52\u6863" else "Archived"
+        isToday -> copy.dueToday
+        isPast -> if (language == AppLanguage.Zh) "\u5F85\u786E\u8BA4\u7EED\u8D39" else "Renewal pending"
+        else -> copy.inDays.format(days)
+    }
+    val dateText = next.format(DateTimeFormatter.ofPattern(if (language == AppLanguage.Zh) "M\u6708d\u65E5" else "MMM d"))
+    val animatedSurface by animateColorAsState(targetValue = surface, label = "subscription card surface")
+
     Column(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(animatedSurface)
             .clickable { onOpenEditor(sub) }
             .animateContentSize()
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.Top) {
+            SubscriptionAvatar(sub, palette)
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(sub.name, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(2.dp))
-                Text("${currencySymbol(sub.currency)}${"%.2f".format(sub.price)} ${cycleText(sub, copy, language)}", color = palette.text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Text(sub.category, color = palette.muted, fontSize = 12.sp)
-                if (sub.state != SubscriptionState.Active) {
-                    Text(stateLabel(sub.state, language), color = palette.warning, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-                sub.accountBalance?.let {
-                    Text("${copy.accountBalance}: ${currencySymbol(sub.currency)}${"%.2f".format(it)}", color = palette.muted, fontSize = 12.sp)
-                    val coverage = if (sub.price > 0) (it / sub.price).toInt() else 0
-                    val balanceHint = when {
-                        it < sub.price -> if (language == AppLanguage.Zh) {
-                            "余额不足 ${currencySymbol(sub.currency)}${"%.2f".format(sub.price - it)}"
-                        } else {
-                            "Short ${currencySymbol(sub.currency)}${"%.2f".format(sub.price - it)}"
-                        }
-                        else -> if (language == AppLanguage.Zh) "可覆盖 $coverage 次续费" else "Covers $coverage renewals"
-                    }
-                    Text(balanceHint, color = if (it < sub.price) palette.danger else palette.muted, fontSize = 12.sp)
-                }
-                if (sub.ledger.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (language == AppLanguage.Zh) "最近：${ledgerTypeLabel(sub.ledger.first().type, language)} ${formatMoney(sub.ledger.first().amount, sub.currency)}" else "Latest: ${ledgerTypeLabel(sub.ledger.first().type, language)} ${formatMoney(sub.ledger.first().amount, sub.currency)}",
-                        color = palette.muted,
-                        fontSize = 12.sp,
+                        sub.name,
+                        color = palette.text,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
+                    Spacer(Modifier.width(8.dp))
+                    Text(formatMoney(sub.price, sub.currency), color = palette.text, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
-                latestPriceChange(sub)?.let {
-                    Text(
-                        if (language == AppLanguage.Zh) "价格变更：${formatMoney(it.amount, sub.currency)}" else "Price changed: ${formatMoney(it.amount, sub.currency)}",
-                        color = palette.warning,
-                        fontSize = 12.sp
-                    )
+                Spacer(Modifier.height(6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SubscriptionTag(sub.category, palette)
+                    SubscriptionTag(cycleText(sub, copy, language), palette)
+                    if (isInactive) SubscriptionTag(stateLabel(sub.state, language), palette, highlight = true)
                 }
             }
-            Column(horizontalAlignment = Alignment.End) {
-                if (isToday) {
-                    Text(copy.payToday, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clip(CircleShape).background(palette.warning).padding(horizontal = 8.dp, vertical = 3.dp))
-                    Spacer(Modifier.height(6.dp))
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SubscriptionDuePill(text = dueText, date = dateText, color = dateColor, palette = palette, modifier = Modifier.weight(1f))
+            sub.accountBalance?.let { balance ->
+                val coverage = if (sub.price > 0) (balance / sub.price).toInt() else 0
+                val balanceHint = if (balance < sub.price) {
+                    if (language == AppLanguage.Zh) "\u5DEE ${formatMoney(sub.price - balance, sub.currency)}" else "Short ${formatMoney(sub.price - balance, sub.currency)}"
+                } else {
+                    if (language == AppLanguage.Zh) "\u53EF\u7EED $coverage \u6B21" else "Covers $coverage"
                 }
-                Text(
-                    next.format(DateTimeFormatter.ofPattern(if (language == AppLanguage.Zh) "yyyy年M月d日" else "MMM d, yyyy")),
-                    color = if (isPast) palette.danger else if (isToday) palette.warning else palette.text,
-                    fontWeight = FontWeight.SemiBold
+                SubscriptionMiniMetric(
+                    label = copy.accountBalance,
+                    value = formatMoney(balance, sub.currency),
+                    hint = balanceHint,
+                    color = if (balance < sub.price) palette.danger else palette.text,
+                    palette = palette,
+                    modifier = Modifier.weight(1f)
                 )
-                val status = when {
-                    sub.state == SubscriptionState.Paused -> if (language == AppLanguage.Zh) "已暂停提醒" else "Paused"
-                    sub.state == SubscriptionState.Archived -> if (language == AppLanguage.Zh) "已归档" else "Archived"
-                    isToday -> copy.dueToday
-                    isPast -> if (language == AppLanguage.Zh) "待确认续费 · ${copy.overdue.format(abs(days))}" else "Renewal pending · ${copy.overdue.format(abs(days))}"
-                    else -> copy.inDays.format(days)
-                }
-                Text(status, color = palette.muted, fontSize = 12.sp)
             }
         }
-        if (issues.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
+
+        if (issues.isNotEmpty() || sub.ledger.isNotEmpty() || latestPriceChange(sub) != null) {
+            Spacer(Modifier.height(10.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                issues.forEach { issue -> CycleChip(issue, true, palette) {} }
+                issues.forEach { issue -> SubscriptionTag(issue, palette, highlight = true) }
+                sub.ledger.firstOrNull()?.let { entry ->
+                    SubscriptionTag(
+                        if (language == AppLanguage.Zh) "\u6700\u8FD1 ${ledgerTypeLabel(entry.type, language)} ${formatMoney(entry.amount, sub.currency)}" else "Latest ${ledgerTypeLabel(entry.type, language)} ${formatMoney(entry.amount, sub.currency)}",
+                        palette
+                    )
+                }
+                latestPriceChange(sub)?.let { entry ->
+                    SubscriptionTag(
+                        if (language == AppLanguage.Zh) "\u4EF7\u683C\u53D8\u66F4 ${formatMoney(entry.amount, sub.currency)}" else "Price changed ${formatMoney(entry.amount, sub.currency)}",
+                        palette,
+                        highlight = true
+                    )
+                }
             }
         }
-        if (sub.imageUri != null || showRenewAction) {
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (sub.imageUri != null) {
-                    Icon(Icons.Rounded.Image, null, tint = palette.accent, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (language == AppLanguage.Zh) "图片" else "Image", color = palette.accent, fontSize = 12.sp)
+
+        if (showRenewAction) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { onLedger(sub, LedgerType.Expense) }) {
+                    Text(if (language == AppLanguage.Zh) "\u8BB0\u4E00\u7B14" else "Log")
                 }
                 Spacer(Modifier.weight(1f))
-                if (showRenewAction && sub.state == SubscriptionState.Active) {
-                    TextButton(onClick = { onLedger(sub, LedgerType.Expense) }) {
-                        Text(if (language == AppLanguage.Zh) "记一笔" else "Log")
-                    }
-                }
-                if (sub.state != SubscriptionState.Active && showRenewAction) {
+                if (sub.state != SubscriptionState.Active) {
                     TextButton(onClick = { onStateChange(sub, SubscriptionState.Active) }) {
-                        Text(if (language == AppLanguage.Zh) "恢复" else "Resume")
+                        Text(if (language == AppLanguage.Zh) "\u6062\u590D" else "Resume")
                     }
                 }
-                if ((isToday || isPast) && showRenewAction && sub.state == SubscriptionState.Active) {
+                if ((isToday || isPast) && sub.state == SubscriptionState.Active) {
                     TextButton(onClick = { onStateChange(sub, SubscriptionState.Paused) }) {
-                        Text(if (language == AppLanguage.Zh) "暂停" else "Pause")
+                        Text(if (language == AppLanguage.Zh) "\u6682\u505C" else "Pause")
                     }
                     TextButton(onClick = { onStateChange(sub, SubscriptionState.Archived) }) {
-                        Text(if (language == AppLanguage.Zh) "归档" else "Archive")
+                        Text(if (language == AppLanguage.Zh) "\u5F52\u6863" else "Archive")
                     }
                     Button(
                         onClick = { onRenew(sub) },
-                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentSoft, contentColor = palette.accent)
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = Color.White)
                     ) {
                         Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
@@ -2018,6 +2269,69 @@ fun SubscriptionRow(
     }
 }
 
+@Composable
+fun SubscriptionAvatar(sub: Subscription, palette: Palette) {
+    Box(Modifier.size(48.dp).clip(RoundedCornerShape(16.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
+        ServiceInitial(sub.name, palette, fontSize = 20.sp)
+        if (sub.imageUri != null) {
+            Image(
+                painter = rememberAsyncImagePainter(sub.imageUri),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+fun ServiceInitial(name: String, palette: Palette, fontSize: TextUnit) {
+    Text(name.trim().take(1).uppercase().ifBlank { "S" }, color = palette.accent, fontSize = fontSize, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+fun SubscriptionTag(text: String, palette: Palette, highlight: Boolean = false) {
+    Text(
+        text,
+        color = if (highlight) palette.accent else palette.muted,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(if (highlight) palette.accentSoft else palette.field)
+            .padding(horizontal = 9.dp, vertical = 5.dp)
+    )
+}
+
+@Composable
+fun SubscriptionDuePill(text: String, date: String, color: Color, palette: Palette, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(palette.field)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Text(text, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(2.dp))
+        Text(date, color = palette.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+fun SubscriptionMiniMetric(label: String, value: String, hint: String, color: Color, palette: Palette, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(palette.field)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Text(label, color = palette.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(hint, color = palette.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
 @Composable
 fun NewSettingsScreen(
     settings: AppSettings,
@@ -2037,6 +2351,15 @@ fun NewSettingsScreen(
         onSettings(settings.copy(notificationsEnabled = granted))
         if (!granted && Build.VERSION.SDK_INT >= 33) {
             context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+        }
+    }
+    val requestNotificationPermissionOrEnable: () -> Unit = {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            onSettings(settings.copy(notificationsEnabled = true))
         }
     }
 
@@ -2072,11 +2395,10 @@ fun NewSettingsScreen(
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
             Column(Modifier.weight(1f)) {
                 Text(copy.settings, color = palette.text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("SubRadar v2.0.0.6", color = palette.muted, fontSize = 12.sp)
+                Text("SubRadar v2.0.0.7", color = palette.muted, fontSize = 12.sp)
             }
         }
         LazyColumn(contentPadding = PaddingValues(16.dp, 6.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            item { SettingsHeroCard(settings, palette) }
             item {
                 SettingsPanelCard(
                     icon = Icons.Rounded.Palette,
@@ -2112,13 +2434,7 @@ fun NewSettingsScreen(
                         Switch(
                             checked = settings.notificationsEnabled,
                             onCheckedChange = { enabled ->
-                                if (enabled && Build.VERSION.SDK_INT >= 33 &&
-                                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    onSettings(settings.copy(notificationsEnabled = enabled))
-                                }
+                                if (enabled) requestNotificationPermissionOrEnable() else onSettings(settings.copy(notificationsEnabled = false))
                             }
                         )
                     }
@@ -2155,6 +2471,7 @@ fun NewSettingsScreen(
                         CompactNumberField(
                             value = rateText,
                             palette = palette,
+                            modifier = Modifier.fillMaxWidth(),
                             onValueChange = {
                                 rateText = it
                                 it.toDoubleOrNull()?.takeIf { rate -> rate > 0.0 }?.let { rate ->
@@ -2216,49 +2533,23 @@ fun NewSettingsScreen(
                     subtitle = if (settings.language == AppLanguage.Zh) "\u5907\u4EFD\u3001\u5BFC\u5165\u548C\u7248\u672C" else "Backup and app version",
                     palette = palette
                 ) {
-                    SettingsOptionRow(
+                    SettingsActionRow(
                         title = if (settings.language == AppLanguage.Zh) "\u5BFC\u5165\u5907\u4EFD" else "Import backup",
                         subtitle = if (settings.language == AppLanguage.Zh) "\u4ECE JSON \u6587\u4EF6\u6062\u590D\u6570\u636E" else "Restore from a JSON file",
-                        palette = palette
-                    ) {
-                        TextButton(onClick = onImport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u5165" else "Import") }
-                    }
+                        palette = palette,
+                        action = { TextButton(onClick = onImport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u5165" else "Import") } }
+                    )
                     SettingsThinDivider(palette)
-                    SettingsOptionRow(
+                    SettingsActionRow(
                         title = if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA\u5907\u4EFD" else "Export backup",
                         subtitle = if (settings.language == AppLanguage.Zh) "\u4FDD\u5B58\u5F53\u524D\u8BBE\u7F6E\u548C\u8BA2\u9605" else "Save current settings and subscriptions",
-                        palette = palette
-                    ) {
-                        TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") }
-                    }
+                        palette = palette,
+                        action = { TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") } }
+                    )
                     SettingsThinDivider(palette)
                     Text(copy.about, color = palette.muted, fontSize = 12.sp)
                 }
             }
-        }
-    }
-}
-
-@Composable
-fun SettingsHeroCard(settings: AppSettings, palette: Palette) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .background(palette.accentSoft)
-            .padding(18.dp)
-    ) {
-        Text("SubRadar", color = palette.text, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            if (settings.language == AppLanguage.Zh) "\u4E13\u6CE8\u8BA2\u9605\u3001\u5230\u671F\u548C\u4F59\u989D\u7BA1\u7406" else "Focused subscription, renewal, and balance management",
-            color = palette.muted,
-            fontSize = 13.sp
-        )
-        Spacer(Modifier.height(14.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CycleChip(if (settings.language == AppLanguage.Zh) "\u4E3B\u5E01 ${currencySymbol(settings.primaryCurrency)}" else "Primary ${currencySymbol(settings.primaryCurrency)}", true, palette) {}
-            CycleChip(if (settings.notificationsEnabled) if (settings.language == AppLanguage.Zh) "\u63D0\u9192\u5DF2\u5F00" else "Alerts on" else if (settings.language == AppLanguage.Zh) "\u63D0\u9192\u5173\u95ED" else "Alerts off", settings.notificationsEnabled, palette) {}
         }
     }
 }
@@ -2315,6 +2606,23 @@ fun SettingsOptionRow(
 }
 
 @Composable
+fun SettingsActionRow(
+    title: String,
+    subtitle: String?,
+    palette: Palette,
+    action: @Composable () -> Unit
+) {
+    Row(Modifier.fillMaxWidth().animateContentSize(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = palette.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+        }
+        Spacer(Modifier.width(12.dp))
+        action()
+    }
+}
+
+@Composable
 fun SettingsSwitchRow(
     title: String,
     subtitle: String?,
@@ -2339,7 +2647,7 @@ fun SettingsThinDivider(palette: Palette) {
 }
 
 @Composable
-fun CompactNumberField(value: String, palette: Palette, onValueChange: (String) -> Unit) {
+fun CompactNumberField(value: String, palette: Palette, modifier: Modifier = Modifier.width(96.dp), onValueChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -2354,7 +2662,7 @@ fun CompactNumberField(value: String, palette: Palette, onValueChange: (String) 
             placeholderColor = palette.muted
         ),
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.width(96.dp)
+        modifier = modifier
     )
 }
 
@@ -2402,7 +2710,7 @@ fun <T> Segmented(values: List<T>, current: T, label: (T) -> String, palette: Pa
                 label = "segment bubble height"
             )
             val bubbleColor by animateColorAsState(
-                targetValue = if (selected) palette.accentSoft.copy(alpha = 0.78f) else palette.accentSoft.copy(alpha = 0f),
+                targetValue = if (selected) palette.accent.copy(alpha = 0.18f) else palette.accent.copy(alpha = 0f),
                 animationSpec = tween(220),
                 label = "segment bubble color"
             )
@@ -2444,52 +2752,20 @@ fun SubscriptionEditorOverlay(
     onDelete: (Subscription) -> Unit,
     onSave: (Subscription) -> Unit
 ) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(animationSpec = tween(160)),
-            exit = fadeOut(animationSpec = tween(120))
-        ) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.34f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismiss
-                    )
-            )
-        }
-        AnimatedVisibility(
-            visible = visible,
-            enter = slideInVertically(
-                animationSpec = tween(260),
-                initialOffsetY = { it / 3 }
-            ) + scaleIn(
-                animationSpec = tween(260),
-                initialScale = 0.16f,
-                transformOrigin = TransformOrigin(0.9f, 1f)
-            ) + fadeIn(animationSpec = tween(120)),
-            exit = slideOutVertically(
-                animationSpec = tween(220),
-                targetOffsetY = { it / 3 }
-            ) + scaleOut(
-                animationSpec = tween(220),
-                targetScale = 0.16f,
-                transformOrigin = TransformOrigin(0.9f, 1f)
-            ) + fadeOut(animationSpec = tween(100))
-        ) {
-            SubscriptionEditorSheet(
-                initial = initial,
-                settings = settings,
-                copy = copy,
-                palette = palette,
-                onDismiss = onDismiss,
-                onDelete = onDelete,
-                onSave = onSave
-            )
-        }
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInHorizontally(animationSpec = tween(260), initialOffsetX = { it }) + fadeIn(animationSpec = tween(120)),
+        exit = slideOutHorizontally(animationSpec = tween(220), targetOffsetX = { it }) + fadeOut(animationSpec = tween(100))
+    ) {
+        SubscriptionEditorSheet(
+            initial = initial,
+            settings = settings,
+            copy = copy,
+            palette = palette,
+            onDismiss = onDismiss,
+            onDelete = onDelete,
+            onSave = onSave
+        )
     }
 }
 
@@ -2518,12 +2794,13 @@ fun SubscriptionEditorSheet(
     var subscriptionState by remember { mutableStateOf(initial?.state ?: SubscriptionState.Active) }
     var category by remember { mutableStateOf(initial?.category ?: settings.defaultCategory) }
     var notes by remember { mutableStateOf(initial?.notes.orEmpty()) }
-    var imageUri by remember { mutableStateOf(initial?.imageUri) }
+    val initialAutoImage = remember(initial?.serviceUrl) { faviconUrlFromInput(initial?.serviceUrl.orEmpty()) }
+    var serviceUrl by remember { mutableStateOf(initial?.serviceUrl.orEmpty()) }
+    var imageUri by remember { mutableStateOf(initial?.imageUri ?: initialAutoImage) }
+    var manualImage by remember { mutableStateOf(initial?.let { it.imageUri != null && it.imageUri != initialAutoImage } ?: false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var pickingDateForStart by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val sheetMaxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.9f
-    val formMaxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.72f
     val parsedPrice = price.toDoubleOrNull()
     val parsedDuration = customDuration.toIntOrNull()
     val canSave = name.trim().isNotEmpty() &&
@@ -2532,40 +2809,27 @@ fun SubscriptionEditorSheet(
         (cycle != BillingCycle.Custom || (parsedDuration != null && parsedDuration > 0))
     val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         imageUri = uri?.let { persistImage(context, it) }
+        if (imageUri != null) manualImage = true
     }
 
     Column(
         Modifier
-            .fillMaxWidth()
-            .heightIn(max = sheetMaxHeight)
-            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-            .background(palette.card)
+            .fillMaxSize()
+            .background(palette.bg)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {}
+            .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    Modifier
-                        .size(width = 38.dp, height = 4.dp)
-                        .clip(CircleShape)
-                        .background(palette.muted.copy(alpha = 0.28f))
-                )
-            }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, null, tint = palette.text) }
+                IconButton(onClick = onDismiss) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
                 Text(
                     if (initial == null) copy.newSub else copy.editSub,
                     color = palette.text,
@@ -2576,14 +2840,37 @@ fun SubscriptionEditorSheet(
                 if (initial != null) IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Rounded.Delete, null, tint = palette.danger) }
             }
             LazyColumn(
-                contentPadding = PaddingValues(18.dp, 0.dp, 18.dp, 18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.heightIn(max = formMaxHeight)
+                contentPadding = PaddingValues(16.dp, 6.dp, 16.dp, 24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.fillMaxSize()
             ) {
+                item {
+                    SubscriptionEditorHero(
+                        name = name,
+                        price = parsedPrice,
+                        currency = currency,
+                        cycle = cycleText(
+                            Subscription(
+                                name = name.ifBlank { copy.serviceName },
+                                price = parsedPrice ?: 0.0,
+                                currency = currency,
+                                cycle = cycle,
+                                customCycleDuration = parsedDuration.takeIf { cycle == BillingCycle.Custom },
+                                customCycleUnit = customUnit.takeIf { cycle == BillingCycle.Custom },
+                                nextBillingDate = nextBillingDate
+                            ),
+                            copy,
+                            if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En
+                        ),
+                        imageUri = imageUri,
+                        language = if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En,
+                        palette = palette
+                    )
+                }
                 if (initial == null) {
                     item {
                         Column {
-                            Text(if (copy === zhCopy) "快速模板" else "Quick templates", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+                            Text(if (copy === zhCopy) "\u5FEB\u901F\u6A21\u677F" else "Quick templates", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 subscriptionTemplates(copy === zhCopy).forEach { template ->
                                     CycleChip(template.name, false, palette) {
@@ -2600,6 +2887,18 @@ fun SubscriptionEditorSheet(
                     }
                 }
                 item { Field(name, { name = it }, copy.serviceName, palette) }
+                item {
+                    Field(
+                        value = serviceUrl,
+                        onValueChange = {
+                            serviceUrl = it
+                            if (!manualImage) imageUri = faviconUrlFromInput(it)
+                        },
+                        label = if (copy === zhCopy) "\u670D\u52A1\u7F51\u5740" else "Service website",
+                        palette = palette,
+                        keyboardType = KeyboardType.Uri
+                    )
+                }
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Segmented(Currency.entries, currency, { currencySymbol(it) }, palette, { currency = it })
@@ -2620,7 +2919,7 @@ fun SubscriptionEditorSheet(
                             Field(
                                 customDuration,
                                 { customDuration = it.filter(Char::isDigit) },
-                                if (copy === zhCopy) "每" else "Every",
+                                if (copy === zhCopy) "\u6BCF" else "Every",
                                 palette,
                                 KeyboardType.Number,
                                 Modifier.fillMaxWidth()
@@ -2656,7 +2955,7 @@ fun SubscriptionEditorSheet(
                 item { Field(balance, { balance = it }, copy.accountBalance, palette, KeyboardType.Decimal) }
                 item {
                     Column {
-                        Text(if (copy === zhCopy) "消费模式" else "Spending mode", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+                        Text(if (copy === zhCopy) "\u6D88\u8D39\u6A21\u5F0F" else "Spending mode", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SpendingMode.entries.forEach { mode ->
                                 CycleChip(modeLabel(mode, if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En), spendingMode == mode, palette) {
@@ -2668,7 +2967,7 @@ fun SubscriptionEditorSheet(
                 }
                 item {
                     Column {
-                        Text(if (copy === zhCopy) "订阅状态" else "Subscription state", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+                        Text(if (copy === zhCopy) "\u8BA2\u9605\u72B6\u6001" else "Subscription state", color = palette.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SubscriptionState.entries.forEach { state ->
                                 CycleChip(stateLabel(state, if (copy === zhCopy) AppLanguage.Zh else AppLanguage.En), subscriptionState == state, palette) {
@@ -2705,25 +3004,34 @@ fun SubscriptionEditorSheet(
                     }
                 }
                 item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         imageUri?.let {
-                            Image(
-                                painter = rememberAsyncImagePainter(it),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(82.dp).aspectRatio(1f).clip(RoundedCornerShape(18.dp))
-                            )
-                            Spacer(Modifier.width(12.dp))
+                            Box(Modifier.size(82.dp).aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
+                                ServiceInitial(name, palette, fontSize = 24.sp)
+                                Image(
+                                    painter = rememberAsyncImagePainter(it),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                         Button(onClick = { imageLauncher.launch("image/*") }) {
                             Icon(Icons.Rounded.Image, null)
                             Spacer(Modifier.width(8.dp))
                             Text(copy.addImage)
                         }
+                        faviconUrlFromInput(serviceUrl)?.let { autoImage ->
+                            TextButton(onClick = {
+                                imageUri = autoImage
+                                manualImage = false
+                            }) {
+                                Text(if (copy === zhCopy) "\u4F7F\u7528\u7F51\u7AD9\u56FE\u6807" else "Use website icon")
+                            }
+                        }
                         if (imageUri != null) {
-                            Spacer(Modifier.width(8.dp))
                             TextButton(onClick = { imageUri = null }) {
-                                Text(if (copy === zhCopy) "移除" else "Remove")
+                                Text(if (copy === zhCopy) "\u79FB\u9664" else "Remove")
                             }
                         }
                     }
@@ -2749,7 +3057,8 @@ fun SubscriptionEditorSheet(
                                     ledger = initial?.ledger.orEmpty(),
                                     category = category.trim().ifBlank { "Other" },
                                     notes = notes.ifBlank { null },
-                                    imageUri = imageUri,
+                                    serviceUrl = normalizeServiceUrl(serviceUrl),
+                                    imageUri = imageUri ?: faviconUrlFromInput(serviceUrl),
                                     createdAt = initial?.createdAt ?: System.currentTimeMillis()
                                 )
                             )
@@ -2798,6 +3107,57 @@ fun SubscriptionEditorSheet(
             onConfirm = { onDelete(initial) },
             onDismiss = { confirmDelete = false }
         )
+    }
+}
+
+@Composable
+fun SubscriptionEditorHero(
+    name: String,
+    price: Double?,
+    currency: Currency,
+    cycle: String,
+    imageUri: String?,
+    language: AppLanguage,
+    palette: Palette
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(26.dp))
+            .background(palette.card)
+            .padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(62.dp).clip(RoundedCornerShape(20.dp)).background(palette.accentSoft), contentAlignment = Alignment.Center) {
+            ServiceInitial(name.ifBlank { "S" }, palette, fontSize = 24.sp)
+            imageUri?.let {
+                Image(
+                    painter = rememberAsyncImagePainter(it),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                name.ifBlank { if (language == AppLanguage.Zh) "\u65B0\u8BA2\u9605" else "New subscription" },
+                color = palette.text,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                price?.let { "${formatMoney(it, currency)} $cycle" } ?: cycle,
+                color = palette.muted,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -3083,6 +3443,22 @@ private fun persistImage(context: Context, uri: Uri): String? {
     }.getOrNull()
 }
 
+private fun normalizeServiceUrl(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isBlank()) return null
+    val candidate = if (trimmed.contains("://")) trimmed else "https://$trimmed"
+    val uri = Uri.parse(candidate)
+    val host = uri.host?.lowercase()?.trim('.') ?: return null
+    if (!host.contains(".")) return null
+    return uri.buildUpon().scheme(uri.scheme ?: "https").authority(host).build().toString()
+}
+
+private fun faviconUrlFromInput(input: String): String? {
+    val normalized = normalizeServiceUrl(input) ?: return null
+    val host = Uri.parse(normalized).host?.removePrefix("www.") ?: return null
+    return "https://www.google.com/s2/favicons?domain=${Uri.encode(host)}&sz=128"
+}
+
 private fun currencySymbol(currency: Currency) = if (currency == Currency.CNY) "¥" else "$"
 
 private fun cycleText(sub: Subscription, copy: Copy, language: AppLanguage): String {
@@ -3099,7 +3475,7 @@ private fun cycleShortLabel(cycle: BillingCycle, language: AppLanguage): String 
         BillingCycle.Monthly -> if (language == AppLanguage.Zh) "月" else "Mo"
         BillingCycle.Quarterly -> if (language == AppLanguage.Zh) "季" else "Qtr"
         BillingCycle.Yearly -> if (language == AppLanguage.Zh) "年" else "Yr"
-        BillingCycle.Custom -> if (language == AppLanguage.Zh) "自定" else "Custom"
+        BillingCycle.Custom -> if (language == AppLanguage.Zh) "自定义" else "Custom"
     }
 }
 
@@ -3144,7 +3520,7 @@ private fun cycleUnitText(unit: CycleUnit?, language: AppLanguage): String {
 
 private fun themeLabel(theme: AppThemeMode, language: AppLanguage): String {
     return when (theme) {
-        AppThemeMode.Light -> if (language == AppLanguage.Zh) "明亮" else "Light"
+        AppThemeMode.Light -> if (language == AppLanguage.Zh) "浅色" else "Light"
         AppThemeMode.Dark -> if (language == AppLanguage.Zh) "深色" else "Dark"
         AppThemeMode.Auto -> if (language == AppLanguage.Zh) "自动" else "Auto"
     }
@@ -3152,20 +3528,9 @@ private fun themeLabel(theme: AppThemeMode, language: AppLanguage): String {
 
 private fun displayModeLabel(mode: HomeTab, language: AppLanguage): String {
     return when (mode) {
-        HomeTab.List -> if (language == AppLanguage.Zh) "\u5217\u8868" else "List"
+        HomeTab.Home -> if (language == AppLanguage.Zh) "\u9996\u9875" else "Home"
         HomeTab.Stats -> if (language == AppLanguage.Zh) "\u7EDF\u8BA1" else "Stats"
-        HomeTab.Attention -> if (language == AppLanguage.Zh) "\u5F85\u529E" else "Due"
-    }
-}
-
-private fun smartFilterLabel(filter: SmartFilter, language: AppLanguage): String {
-    return when (filter) {
-        SmartFilter.All -> if (language == AppLanguage.Zh) "全部" else "All"
-        SmartFilter.Attention -> if (language == AppLanguage.Zh) "待处理" else "Attention"
-        SmartFilter.Due -> if (language == AppLanguage.Zh) "到期" else "Due"
-        SmartFilter.LowBalance -> if (language == AppLanguage.Zh) "余额不足" else "Low balance"
-        SmartFilter.Active -> if (language == AppLanguage.Zh) "活跃" else "Active"
-        SmartFilter.Archived -> if (language == AppLanguage.Zh) "归档" else "Archived"
+        HomeTab.User -> if (language == AppLanguage.Zh) "\u7528\u6237" else "User"
     }
 }
 
@@ -3225,12 +3590,6 @@ private fun monthlyInCurrency(sub: Subscription, target: Currency, usdToCnyRate:
 
 private fun formatMoney(value: Double, currency: Currency): String {
     return "${currencySymbol(currency)}${"%.0f".format(value)}"
-}
-
-private fun formatDateLabel(value: String, language: AppLanguage): String {
-    val date = parseDate(value) ?: return value
-    val pattern = if (language == AppLanguage.Zh) "yyyy年M月d日" else "MMM d, yyyy"
-    return date.format(DateTimeFormatter.ofPattern(pattern))
 }
 
 private fun categoryPresets(isZh: Boolean): List<String> {
