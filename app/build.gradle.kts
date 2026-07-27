@@ -12,8 +12,8 @@ android {
         applicationId = "app.subradar"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2006
-        versionName = "2.0.0.6"
+        versionCode = 2007
+        versionName = "2.0.0.7"
     }
 
     buildFeatures {
