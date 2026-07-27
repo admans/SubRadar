@@ -26,8 +26,10 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -96,6 +98,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
@@ -183,7 +186,8 @@ enum class CycleUnit { Day, Week, Month, Year }
 enum class AppLanguage { En, Zh }
 enum class AppThemeMode { Light, Dark, Auto }
 enum class Currency { CNY, USD }
-enum class DisplayMode { List, Calendar, Stats }
+enum class DisplayMode { List, Stats }
+enum class HomeTab { List, Stats, Attention }
 enum class SmartFilter { All, Attention, Due, LowBalance, Active, Archived }
 enum class SpendingMode { Fixed, Balance, Metered, Hybrid }
 enum class LedgerType { Renewal, Expense, TopUp, Refund, Adjustment, PriceChange }
@@ -837,7 +841,7 @@ fun NativeSubRadar() {
                     enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
                     exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
                 ) {
-                    SettingsScreen(
+                    NewSettingsScreen(
                         settings = settings,
                         copy = copy,
                         palette = palette,
@@ -1311,6 +1315,7 @@ fun MainScreen(
     onStateChange: (Subscription, SubscriptionState) -> Unit,
     onCreate: () -> Unit
 ) {
+    var searchExpanded by remember { mutableStateOf(searchQuery.isNotBlank()) }
     val duplicateIds = duplicateIds(allItems)
     val visibleItems = items
         .filter { categoryFilter == null || it.category == categoryFilter }
@@ -1318,6 +1323,11 @@ fun MainScreen(
     val categories = allItems.map { it.category }.distinct().sorted()
     val attentionItems = allItems.filter { needsAttention(it) || duplicateIds.contains(it.id) }
     val lowBalanceCount = allItems.count { isLowBalance(it) }
+    val activeTab = when {
+        smartFilter == SmartFilter.Attention -> HomeTab.Attention
+        displayMode == DisplayMode.Stats -> HomeTab.Stats
+        else -> HomeTab.List
+    }
     Box(Modifier.fillMaxSize().background(palette.bg)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             CompactHeader(
@@ -1326,46 +1336,67 @@ fun MainScreen(
                 copy = copy,
                 palette = palette,
                 searchQuery = searchQuery,
-                attentionCount = attentionItems.size,
-                lowBalanceCount = lowBalanceCount,
-                onSearchChange = onSearchChange,
-                onOpenSettings = onOpenSettings,
-                onShowAttention = { onSmartFilterChange(SmartFilter.Attention) }
+                searchExpanded = searchExpanded,
+                onToggleSearch = {
+                    searchExpanded = !searchExpanded
+                    if (!searchExpanded) onSearchChange("")
+                },
+                onOpenSettings = onOpenSettings
             )
-            DashboardControls(
-                displayMode = displayMode,
+            AnimatedVisibility(
+                visible = searchExpanded,
+                enter = expandVertically(animationSpec = tween(220), expandFrom = Alignment.Top) +
+                    fadeIn(animationSpec = tween(160)) +
+                    slideInVertically(animationSpec = tween(220), initialOffsetY = { -it / 3 }),
+                exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) +
+                    fadeOut(animationSpec = tween(120)) +
+                    slideOutVertically(animationSpec = tween(180), targetOffsetY = { -it / 3 })
+            ) {
+                HomeSearchField(
+                    value = searchQuery,
+                    copy = copy,
+                    palette = palette,
+                    onValueChange = onSearchChange,
+                    onClose = {
+                        searchExpanded = false
+                        onSearchChange("")
+                    }
+                )
+            }
+            CategoryFilterRow(
                 categories = categories,
                 categoryFilter = categoryFilter,
-                smartFilter = smartFilter,
                 settings = settings,
                 palette = palette,
-                onDisplayModeChange = onDisplayModeChange,
-                onCategoryFilterChange = onCategoryFilterChange,
-                onSmartFilterChange = onSmartFilterChange
+                onCategoryFilterChange = onCategoryFilterChange
             )
-            val contentState = when {
+            val contentState = "${activeTab.name}:${when {
                 allItems.isEmpty() -> "empty"
                 visibleItems.isEmpty() -> "noResults"
-                else -> displayMode.name
-            }
+                else -> "content"
+            }}"
             AnimatedContent(
                 targetState = contentState,
                 transitionSpec = {
-                    (fadeIn(animationSpec = tween(180)) + scaleIn(initialScale = 0.98f))
-                        .togetherWith(fadeOut(animationSpec = tween(120)) + scaleOut(targetScale = 0.98f))
+                    val forward = tabOrder(targetState) > tabOrder(initialState)
+                    val enterOffset: (Int) -> Int = { width -> if (forward) width else -width }
+                    val exitOffset: (Int) -> Int = { width -> if (forward) -width else width }
+                    (slideInHorizontally(animationSpec = tween(220), initialOffsetX = enterOffset) + fadeIn(animationSpec = tween(180)))
+                        .togetherWith(slideOutHorizontally(animationSpec = tween(200), targetOffsetX = exitOffset) + fadeOut(animationSpec = tween(140)))
                 },
                 label = "main content"
             ) { state ->
-                when (state) {
-                    "empty" -> EmptyState(copy, palette)
-                    "noResults" -> EmptyState(
+                val tab = state.substringBefore(":")
+                val result = state.substringAfter(":")
+                when {
+                    result == "empty" -> EmptyState(copy, palette)
+                    result == "noResults" -> EmptyState(
                         copy = copy,
                         palette = palette,
                         title = if (settings.language == AppLanguage.Zh) "未找到订阅" else "No matching subscriptions",
                         description = if (settings.language == AppLanguage.Zh) "换个关键词试试。" else "Try another search term."
                     )
-                    DisplayMode.Stats.name -> StatsView(visibleItems, settings, palette)
-                    DisplayMode.Calendar.name -> CalendarView(visibleItems, settings, copy, palette, onOpenEditor, onRenew, onLedger, onStateChange, duplicateIds)
+                    tab == HomeTab.Stats.name -> StatsView(visibleItems, settings, palette)
                     else -> SubscriptionList(
                         items = visibleItems,
                         settings = settings,
@@ -1380,52 +1411,220 @@ fun MainScreen(
                 }
             }
         }
-        FloatingActionButton(
-            onClick = onCreate,
-            containerColor = palette.accent,
-            contentColor = Color.White,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp).navigationBarsPadding()
+        Row(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .navigationBarsPadding(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(Icons.Rounded.Add, null)
+            FloatingNavigationBar(
+                activeTab = activeTab,
+                attentionCount = attentionItems.size + lowBalanceCount,
+                settings = settings,
+                palette = palette,
+                onSelectTab = { tab ->
+                    when (tab) {
+                        HomeTab.List -> {
+                            onDisplayModeChange(DisplayMode.List)
+                            if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
+                        }
+                        HomeTab.Stats -> {
+                            onDisplayModeChange(DisplayMode.Stats)
+                            if (smartFilter != SmartFilter.All) onSmartFilterChange(SmartFilter.All)
+                        }
+                        HomeTab.Attention -> {
+                            onDisplayModeChange(DisplayMode.List)
+                            onSmartFilterChange(SmartFilter.Attention)
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            )
+            FloatingCreateButton(onCreate, palette)
+        }
+    }
+}
+
+private fun tabOrder(state: String): Int {
+    return when (state.substringBefore(":")) {
+        HomeTab.List.name -> 0
+        HomeTab.Stats.name -> 1
+        HomeTab.Attention.name -> 2
+        else -> 0
+    }
+}
+
+@Composable
+fun CategoryFilterRow(
+    categories: List<String>,
+    categoryFilter: String?,
+    settings: AppSettings,
+    palette: Palette,
+    onCategoryFilterChange: (String?) -> Unit
+) {
+    if (categories.size <= 1) return
+    FlowRow(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        CycleChip(if (settings.language == AppLanguage.Zh) "\u5168\u90E8" else "All", categoryFilter == null, palette) {
+            onCategoryFilterChange(null)
+        }
+        categories.forEach { category ->
+            CycleChip(category, categoryFilter == category, palette) {
+                onCategoryFilterChange(category)
+            }
         }
     }
 }
 
 @Composable
-fun DashboardControls(
-    displayMode: DisplayMode,
-    categories: List<String>,
-    categoryFilter: String?,
-    smartFilter: SmartFilter,
+fun FloatingNavigationBar(
+    activeTab: HomeTab,
+    attentionCount: Int,
     settings: AppSettings,
     palette: Palette,
-    onDisplayModeChange: (DisplayMode) -> Unit,
-    onCategoryFilterChange: (String?) -> Unit,
-    onSmartFilterChange: (SmartFilter) -> Unit
+    onSelectTab: (HomeTab) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Segmented(DisplayMode.entries, displayMode, { displayModeLabel(it, settings.language) }, palette, onDisplayModeChange)
-            Spacer(Modifier.weight(1f))
-            Segmented(
-                listOf(SmartFilter.All, SmartFilter.Attention, SmartFilter.LowBalance, SmartFilter.Archived),
-                smartFilter,
-                { smartFilterLabel(it, settings.language) },
-                palette,
-                onSmartFilterChange
+    Row(
+        modifier
+            .shadow(16.dp, CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(palette.card.copy(alpha = 0.96f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        FloatingNavItem(
+            icon = Icons.Rounded.CreditCard,
+            label = displayModeLabel(HomeTab.List, settings.language),
+            selected = activeTab == HomeTab.List,
+            palette = palette,
+            modifier = Modifier.weight(1f)
+        ) { onSelectTab(HomeTab.List) }
+        FloatingNavItem(
+            icon = Icons.Rounded.Wallet,
+            label = displayModeLabel(HomeTab.Stats, settings.language),
+            selected = activeTab == HomeTab.Stats,
+            palette = palette,
+            modifier = Modifier.weight(1f)
+        ) { onSelectTab(HomeTab.Stats) }
+        FloatingNavItem(
+            icon = Icons.Rounded.Notifications,
+            label = if (settings.language == AppLanguage.Zh) "待办" else "Due",
+            selected = activeTab == HomeTab.Attention,
+            badge = attentionCount,
+            palette = palette,
+            modifier = Modifier.weight(1f),
+            onClick = { onSelectTab(HomeTab.Attention) }
+        )
+    }
+}
+
+@Composable
+fun FloatingCreateButton(onCreate: () -> Unit, palette: Palette, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(48.dp)
+            .shadow(12.dp, CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(palette.accent)
+            .clickable(onClick = onCreate),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Rounded.Add, null, tint = Color.White)
+    }
+}
+
+@Composable
+fun FloatingNavItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    palette: Palette,
+    modifier: Modifier = Modifier,
+    badge: Int = 0,
+    onClick: () -> Unit
+) {
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) palette.accent else palette.muted,
+        animationSpec = tween(180),
+        label = "floating nav content"
+    )
+    val iconOffset by animateDpAsState(
+        targetValue = if (selected) (-1).dp else 2.dp,
+        animationSpec = tween(180),
+        label = "floating nav icon offset"
+    )
+    val iconSize by animateDpAsState(
+        targetValue = if (selected) 22.dp else 20.dp,
+        animationSpec = tween(180),
+        label = "floating nav icon size"
+    )
+    val selectedBubbleWidth by animateDpAsState(
+        targetValue = if (selected) 118.dp else 0.dp,
+        animationSpec = tween(220),
+        label = "floating nav selected bubble width"
+    )
+    val selectedBubbleHeight by animateDpAsState(
+        targetValue = if (selected) 40.dp else 0.dp,
+        animationSpec = tween(220),
+        label = "floating nav selected bubble height"
+    )
+    val selectedBubbleColor by animateColorAsState(
+        targetValue = if (selected) palette.accentSoft.copy(alpha = 0.72f) else palette.accentSoft.copy(alpha = 0f),
+        animationSpec = tween(220),
+        label = "floating nav selected bubble color"
+    )
+    Column(
+        modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
             )
-        }
-        if (categories.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                CycleChip(if (settings.language == AppLanguage.Zh) "\u5168\u90E8" else "All", categoryFilter == null, palette) {
-                    onCategoryFilterChange(null)
-                }
-                categories.forEach { category ->
-                    CycleChip(category, categoryFilter == category, palette) {
-                        onCategoryFilterChange(category)
+            .padding(horizontal = 4.dp, vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Box(Modifier.width(selectedBubbleWidth).height(selectedBubbleHeight).clip(CircleShape).background(selectedBubbleColor))
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Box(Modifier.offset(y = iconOffset), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = contentColor, modifier = Modifier.size(iconSize))
+                    if (badge > 0) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 7.dp, y = (-7).dp)
+                                .height(15.dp)
+                                .widthIn(min = 15.dp, max = 26.dp)
+                                .clip(RoundedCornerShape(7.5.dp))
+                                .background(palette.warning),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(if (badge > 99) "99+" else badge.toString(), color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        }
                     }
                 }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    label,
+                    color = contentColor,
+                    fontSize = 9.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -1438,11 +1637,9 @@ fun CompactHeader(
     copy: Copy,
     palette: Palette,
     searchQuery: String,
-    attentionCount: Int,
-    lowBalanceCount: Int,
-    onSearchChange: (String) -> Unit,
-    onOpenSettings: () -> Unit,
-    onShowAttention: () -> Unit
+    searchExpanded: Boolean,
+    onToggleSearch: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     Column(Modifier.fillMaxWidth().background(palette.bg).padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1450,59 +1647,41 @@ fun CompactHeader(
                 Text(copy.appName, color = palette.text, fontWeight = FontWeight.Bold, fontSize = 24.sp)
                 Text("${totalMonthly(items, settings.language)} ${copy.totalMonthly}", color = palette.muted, fontSize = 12.sp)
             }
-            if (attentionCount > 0 || lowBalanceCount > 0) {
-                val alertCount = attentionCount + lowBalanceCount
-                TextButton(
-                    onClick = onShowAttention,
-                    modifier = Modifier.width(108.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            if (settings.language == AppLanguage.Zh) "待处理" else "Attention",
-                            color = palette.warning,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Box(
-                            Modifier
-                                .height(20.dp)
-                                .widthIn(min = 22.dp, max = 34.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(palette.warning.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                if (alertCount > 99) "99+" else alertCount.toString(),
-                                color = palette.warning,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
+            IconButton(onClick = onToggleSearch) {
+                Icon(
+                    if (searchExpanded || searchQuery.isNotBlank()) Icons.Rounded.Close else Icons.Rounded.Search,
+                    null,
+                    tint = if (searchExpanded || searchQuery.isNotBlank()) palette.accent else palette.text
+                )
             }
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Rounded.Settings, null, tint = palette.text)
             }
         }
-        Spacer(Modifier.height(6.dp))
+    }
+}
+
+@Composable
+fun HomeSearchField(
+    value: String,
+    copy: Copy,
+    palette: Palette,
+    onValueChange: (String) -> Unit,
+    onClose: () -> Unit
+) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchChange,
+            value = value,
+            onValueChange = onValueChange,
             placeholder = { Text(copy.search) },
-            leadingIcon = { Icon(Icons.Rounded.Search, null) },
+            leadingIcon = { Icon(Icons.Rounded.Search, null, tint = palette.muted) },
             trailingIcon = {
-                if (searchQuery.isNotBlank()) {
-                    IconButton(onClick = { onSearchChange("") }) {
-                        Icon(Icons.Rounded.Close, null)
-                    }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Rounded.Close, null, tint = palette.muted)
                 }
             },
             singleLine = true,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = palette.field,
                 unfocusedContainerColor = palette.field,
@@ -1511,7 +1690,7 @@ fun CompactHeader(
                 contentColor = palette.text,
                 placeholderColor = palette.muted
             ),
-            modifier = Modifier.fillMaxWidth().heightIn(max = 48.dp)
+            modifier = Modifier.fillMaxWidth().heightIn(max = 50.dp)
         )
     }
 }
@@ -1649,51 +1828,6 @@ fun StatsView(items: List<Subscription>, settings: AppSettings, palette: Palette
 }
 
 @Composable
-fun CalendarView(
-    items: List<Subscription>,
-    settings: AppSettings,
-    copy: Copy,
-    palette: Palette,
-    onOpenEditor: (Subscription) -> Unit,
-    onRenew: (Subscription) -> Unit,
-    onLedger: (Subscription, LedgerType) -> Unit,
-    onStateChange: (Subscription, SubscriptionState) -> Unit,
-    duplicateIds: Set<String>
-) {
-    val grouped = items.sortedBy { it.nextBillingDate }.groupBy { it.nextBillingDate }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 104.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        grouped.forEach { (date, entries) ->
-            item(date) {
-                Text(
-                    text = formatDateLabel(date, settings.language),
-                    color = palette.muted,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            items(entries, key = { it.id }) {
-                SubscriptionRow(
-                    sub = it,
-                    copy = copy,
-                    language = settings.language,
-                    palette = palette,
-                    onOpenEditor = onOpenEditor,
-                    onRenew = onRenew,
-                    onLedger = onLedger,
-                    onStateChange = onStateChange,
-                    isDuplicate = duplicateIds.contains(it.id),
-                    showRenewAction = true
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun StatCard(title: String, value: String, palette: Palette) {
     Column(
         Modifier
@@ -1814,17 +1948,17 @@ fun SubscriptionRow(
     Column(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(animatedSurface)
             .clickable { onOpenEditor(sub) }
             .animateContentSize()
-            .padding(18.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
-                Text(sub.name, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(4.dp))
-                Text("${currencySymbol(sub.currency)}${"%.2f".format(sub.price)} ${cycleText(sub, copy, language)}", color = palette.text, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text(sub.name, color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(2.dp))
+                Text("${currencySymbol(sub.currency)}${"%.2f".format(sub.price)} ${cycleText(sub, copy, language)}", color = palette.text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text(sub.category, color = palette.muted, fontSize = 12.sp)
                 if (sub.state != SubscriptionState.Active) {
                     Text(stateLabel(sub.state, language), color = palette.warning, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -1880,13 +2014,13 @@ fun SubscriptionRow(
             }
         }
         if (issues.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 issues.forEach { issue -> CycleChip(issue, true, palette) {} }
             }
         }
         if (sub.imageUri != null || showRenewAction) {
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (sub.imageUri != null) {
                     Icon(Icons.Rounded.Image, null, tint = palette.accent, modifier = Modifier.size(16.dp))
@@ -2073,6 +2207,319 @@ fun SettingsScreen(
 }
 
 @Composable
+fun NewSettingsScreen(
+    settings: AppSettings,
+    copy: Copy,
+    palette: Palette,
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    onSettings: (AppSettings) -> Unit
+) {
+    val context = LocalContext.current
+    var rateText by remember(settings.usdToCnyRate) { mutableStateOf(settings.usdToCnyRate.toString()) }
+    var defaultCategoryText by remember(settings.defaultCategory) { mutableStateOf(settings.defaultCategory) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        onSettings(settings.copy(notificationsEnabled = granted))
+        if (!granted && Build.VERSION.SDK_INT >= 33) {
+            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(palette.bg).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.text) }
+            Column(Modifier.weight(1f)) {
+                Text(copy.settings, color = palette.text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("SubRadar v2.0.0.4", color = palette.muted, fontSize = 12.sp)
+            }
+        }
+        LazyColumn(contentPadding = PaddingValues(16.dp, 6.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item { SettingsHeroCard(settings, palette) }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.Palette,
+                    title = if (settings.language == AppLanguage.Zh) "\u504F\u597D" else "Preferences",
+                    subtitle = if (settings.language == AppLanguage.Zh) "\u8BBE\u7F6E\u754C\u9762\u548C\u8BED\u8A00" else "Appearance and language",
+                    palette = palette
+                ) {
+                    SettingsOptionRow(
+                        title = copy.appearance,
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u6D45\u8272\u3001\u6DF1\u8272\u6216\u81EA\u52A8" else "Light, dark, or auto",
+                        palette = palette
+                    ) {
+                        Segmented(AppThemeMode.entries, settings.theme, { themeLabel(it, settings.language) }, palette) { onSettings(settings.copy(theme = it)) }
+                    }
+                    SettingsThinDivider(palette)
+                    SettingsOptionRow(
+                        title = copy.language,
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u5207\u6362\u7CFB\u7EDF\u663E\u793A\u8BED\u8A00" else "Switch UI language",
+                        palette = palette
+                    ) {
+                        Segmented(AppLanguage.entries, settings.language, { if (it == AppLanguage.Zh) "\u4E2D\u6587" else "EN" }, palette) { onSettings(settings.copy(language = it)) }
+                    }
+                }
+            }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.Notifications,
+                    title = if (settings.language == AppLanguage.Zh) "\u63D0\u9192" else "Reminders",
+                    subtitle = if (settings.language == AppLanguage.Zh) "\u5230\u671F\u524D\u53CA\u65F6\u63D0\u9192" else "Notify before renewal dates",
+                    palette = palette
+                ) {
+                    SettingsSwitchRow(title = copy.notifications, subtitle = copy.notificationsDesc, palette = palette) {
+                        Switch(
+                            checked = settings.notificationsEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled && Build.VERSION.SDK_INT >= 33 &&
+                                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    onSettings(settings.copy(notificationsEnabled = enabled))
+                                }
+                            }
+                        )
+                    }
+                    SettingsThinDivider(palette)
+                    SettingsOptionRow(
+                        title = if (settings.language == AppLanguage.Zh) "\u63D0\u524D\u5929\u6570" else "Lead time",
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u8DDD\u79BB\u5230\u671F\u591A\u5C11\u5929\u901A\u77E5" else "Days before renewal",
+                        palette = palette
+                    ) {
+                        Segmented(listOf(0, 1, 3, 7), settings.reminderDaysBefore, { it.toString() }, palette) { onSettings(settings.copy(reminderDaysBefore = it)) }
+                    }
+                }
+            }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.Wallet,
+                    title = if (settings.language == AppLanguage.Zh) "\u8D27\u5E01" else "Currency",
+                    subtitle = if (settings.language == AppLanguage.Zh) "\u7EDF\u8BA1\u53E3\u5F84\u548C\u6C47\u7387" else "Money used by stats and reminders",
+                    palette = palette
+                ) {
+                    SettingsOptionRow(
+                        title = if (settings.language == AppLanguage.Zh) "\u4E3B\u8981\u8D27\u5E01" else "Primary currency",
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u9996\u9875\u548C\u7EDF\u8BA1\u4F18\u5148\u4F7F\u7528" else "Used by home and stats first",
+                        palette = palette
+                    ) {
+                        Segmented(Currency.entries, settings.primaryCurrency, { currencySymbol(it) }, palette) { onSettings(settings.copy(primaryCurrency = it)) }
+                    }
+                    SettingsThinDivider(palette)
+                    SettingsOptionRow(
+                        title = if (settings.language == AppLanguage.Zh) "\u7F8E\u5143\u6C47\u7387" else "USD rate",
+                        subtitle = "1 USD = ${settings.usdToCnyRate} CNY",
+                        palette = palette
+                    ) {
+                        CompactNumberField(
+                            value = rateText,
+                            palette = palette,
+                            onValueChange = {
+                                rateText = it
+                                it.toDoubleOrNull()?.takeIf { rate -> rate > 0.0 }?.let { rate ->
+                                    onSettings(settings.copy(usdToCnyRate = rate))
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.CreditCard,
+                    title = if (settings.language == AppLanguage.Zh) "\u65B0\u5EFA\u9ED8\u8BA4\u503C" else "New defaults",
+                    subtitle = if (settings.language == AppLanguage.Zh) "\u65B0\u5EFA\u8BA2\u9605\u65F6\u81EA\u52A8\u5E26\u5165" else "Applied when creating a subscription",
+                    palette = palette
+                ) {
+                    SettingsOptionRow(title = if (settings.language == AppLanguage.Zh) "\u8D27\u5E01" else "Currency", subtitle = null, palette = palette) {
+                        Segmented(Currency.entries, settings.defaultCurrency, { currencySymbol(it) }, palette) { onSettings(settings.copy(defaultCurrency = it)) }
+                    }
+                    SettingsThinDivider(palette)
+                    SettingsOptionRow(title = if (settings.language == AppLanguage.Zh) "\u5468\u671F" else "Cycle", subtitle = null, palette = palette) {
+                        Segmented(BillingCycle.entries.filter { it != BillingCycle.Custom }, settings.defaultCycle.takeIf { it != BillingCycle.Custom } ?: BillingCycle.Monthly, { cycleShortLabel(it, settings.language) }, palette) {
+                            onSettings(settings.copy(defaultCycle = it))
+                        }
+                    }
+                    SettingsThinDivider(palette)
+                    SettingsOptionRow(
+                        title = if (settings.language == AppLanguage.Zh) "\u6D88\u8D39\u6A21\u5F0F" else "Spending mode",
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u63A7\u5236\u9ED8\u8BA4\u8BB0\u8D26\u65B9\u5F0F" else "Controls default ledger behavior",
+                        palette = palette
+                    ) {
+                        Segmented(SpendingMode.entries, settings.defaultSpendingMode, { modeLabel(it, settings.language) }, palette) {
+                            onSettings(settings.copy(defaultSpendingMode = it))
+                        }
+                    }
+                    SettingsThinDivider(palette)
+                    SettingsOptionRow(
+                        title = if (settings.language == AppLanguage.Zh) "\u5206\u7C7B" else "Category",
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u65B0\u8BA2\u9605\u7684\u9ED8\u8BA4\u5206\u7C7B" else "Default category for new items",
+                        palette = palette,
+                        alignTop = true
+                    ) {
+                        CompactTextField(
+                            value = defaultCategoryText,
+                            palette = palette,
+                            modifier = Modifier.fillMaxWidth(),
+                            onValueChange = {
+                                defaultCategoryText = it
+                                onSettings(settings.copy(defaultCategory = it.ifBlank { "Other" }))
+                            }
+                        )
+                    }
+                }
+            }
+            item {
+                SettingsPanelCard(
+                    icon = Icons.Rounded.CreditCard,
+                    title = if (settings.language == AppLanguage.Zh) "\u6570\u636E" else "Data",
+                    subtitle = if (settings.language == AppLanguage.Zh) "\u5907\u4EFD\u3001\u5BFC\u5165\u548C\u7248\u672C" else "Backup and app version",
+                    palette = palette
+                ) {
+                    SettingsOptionRow(
+                        title = if (settings.language == AppLanguage.Zh) "\u5BFC\u5165\u5907\u4EFD" else "Import backup",
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u4ECE JSON \u6587\u4EF6\u6062\u590D\u6570\u636E" else "Restore from a JSON file",
+                        palette = palette
+                    ) {
+                        TextButton(onClick = onImport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u5165" else "Import") }
+                    }
+                    SettingsThinDivider(palette)
+                    SettingsOptionRow(
+                        title = if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA\u5907\u4EFD" else "Export backup",
+                        subtitle = if (settings.language == AppLanguage.Zh) "\u4FDD\u5B58\u5F53\u524D\u8BBE\u7F6E\u548C\u8BA2\u9605" else "Save current settings and subscriptions",
+                        palette = palette
+                    ) {
+                        TextButton(onClick = onExport) { Text(if (settings.language == AppLanguage.Zh) "\u5BFC\u51FA" else "Export") }
+                    }
+                    SettingsThinDivider(palette)
+                    Text(copy.about, color = palette.muted, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsHeroCard(settings: AppSettings, palette: Palette) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(palette.accentSoft)
+            .padding(18.dp)
+    ) {
+        Text("SubRadar", color = palette.text, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (settings.language == AppLanguage.Zh) "\u4E13\u6CE8\u8BA2\u9605\u3001\u5230\u671F\u548C\u4F59\u989D\u7BA1\u7406" else "Focused subscription, renewal, and balance management",
+            color = palette.muted,
+            fontSize = 13.sp
+        )
+        Spacer(Modifier.height(14.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CycleChip(if (settings.language == AppLanguage.Zh) "\u4E3B\u5E01 ${currencySymbol(settings.primaryCurrency)}" else "Primary ${currencySymbol(settings.primaryCurrency)}", true, palette) {}
+            CycleChip(if (settings.notificationsEnabled) if (settings.language == AppLanguage.Zh) "\u63D0\u9192\u5DF2\u5F00" else "Alerts on" else if (settings.language == AppLanguage.Zh) "\u63D0\u9192\u5173\u95ED" else "Alerts off", settings.notificationsEnabled, palette) {}
+        }
+    }
+}
+
+@Composable
+fun SettingsPanelCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    palette: Palette,
+    content: @Composable () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(26.dp))
+            .background(palette.card)
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(palette.accentSoft), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = palette.accent, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = palette.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = palette.muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        content()
+    }
+}
+
+@Composable
+fun SettingsOptionRow(
+    title: String,
+    subtitle: String?,
+    palette: Palette,
+    alignTop: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    Column(Modifier.fillMaxWidth().animateContentSize()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = palette.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun SettingsSwitchRow(
+    title: String,
+    subtitle: String?,
+    palette: Palette,
+    content: @Composable () -> Unit
+) {
+    Row(Modifier.fillMaxWidth().animateContentSize(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = palette.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+        }
+        Spacer(Modifier.width(12.dp))
+        content()
+    }
+}
+
+@Composable
+fun LegacySettingsOptionRow(
+    title: String,
+    subtitle: String?,
+    palette: Palette,
+    alignTop: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    Row(Modifier.fillMaxWidth().animateContentSize(), verticalAlignment = if (alignTop) Alignment.Top else Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = palette.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            subtitle?.let { Text(it, color = palette.muted, fontSize = 12.sp) }
+        }
+        Spacer(Modifier.width(14.dp))
+        Box(Modifier.weight(1.05f), contentAlignment = Alignment.CenterEnd) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun SettingsThinDivider(palette: Palette) {
+    Spacer(Modifier.height(14.dp))
+    Box(Modifier.fillMaxWidth().height(1.dp).background(palette.field))
+    Spacer(Modifier.height(14.dp))
+}
+
+@Composable
 fun SettingsColumnRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
@@ -2217,23 +2664,55 @@ fun CompactTextField(value: String, palette: Palette, modifier: Modifier = Modif
 
 @Composable
 fun <T> Segmented(values: List<T>, current: T, label: (T) -> String, palette: Palette, onSelect: (T) -> Unit) {
-    Row(Modifier.clip(RoundedCornerShape(16.dp)).background(palette.field).padding(3.dp)) {
+    FlowRow(
+        Modifier.fillMaxWidth().clip(CircleShape).background(palette.field).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
         values.forEach { value ->
             val selected = value == current
-            val background by animateColorAsState(
-                targetValue = if (selected) palette.card else Color.Transparent,
-                label = "segment background"
+            val contentColor by animateColorAsState(
+                targetValue = if (selected) palette.accent else palette.muted,
+                animationSpec = tween(180),
+                label = "segment content"
             )
-            Text(
-                label(value),
-                color = if (selected) palette.text else palette.muted,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(13.dp))
-                    .background(background)
-                    .clickable { onSelect(value) }
-                    .padding(horizontal = 10.dp, vertical = 7.dp)
+            val bubbleWidth by animateDpAsState(
+                targetValue = if (selected) 240.dp else 0.dp,
+                animationSpec = tween(220),
+                label = "segment bubble width"
             )
+            val bubbleHeight by animateDpAsState(
+                targetValue = if (selected) 34.dp else 0.dp,
+                animationSpec = tween(220),
+                label = "segment bubble height"
+            )
+            val bubbleColor by animateColorAsState(
+                targetValue = if (selected) palette.accentSoft.copy(alpha = 0.78f) else palette.accentSoft.copy(alpha = 0f),
+                animationSpec = tween(220),
+                label = "segment bubble color"
+            )
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onSelect(value) }
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(Modifier.width(bubbleWidth).height(bubbleHeight).clip(CircleShape).background(bubbleColor))
+                Text(
+                    label(value),
+                    color = contentColor,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
@@ -2948,11 +3427,11 @@ private fun themeLabel(theme: AppThemeMode, language: AppLanguage): String {
     }
 }
 
-private fun displayModeLabel(mode: DisplayMode, language: AppLanguage): String {
+private fun displayModeLabel(mode: HomeTab, language: AppLanguage): String {
     return when (mode) {
-        DisplayMode.List -> if (language == AppLanguage.Zh) "\u5217\u8868" else "List"
-        DisplayMode.Calendar -> if (language == AppLanguage.Zh) "\u65E5\u5386" else "Calendar"
-        DisplayMode.Stats -> if (language == AppLanguage.Zh) "\u7EDF\u8BA1" else "Stats"
+        HomeTab.List -> if (language == AppLanguage.Zh) "\u5217\u8868" else "List"
+        HomeTab.Stats -> if (language == AppLanguage.Zh) "\u7EDF\u8BA1" else "Stats"
+        HomeTab.Attention -> if (language == AppLanguage.Zh) "\u5F85\u529E" else "Due"
     }
 }
 
